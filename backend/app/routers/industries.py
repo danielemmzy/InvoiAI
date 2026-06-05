@@ -9,13 +9,13 @@ router = APIRouter(prefix="/industries", tags=["Industries"])
 @limiter.limit("60/minute")
 async def get_industries(request: Request):
     """
-    Returns all supported industries for the upload dropdown.
+    Public endpoint — no auth required.
+    Returns the industry list for the upload dropdown.
     Frontend calls this once on load.
-    Adding a new industry = one line in models/invoice.py.
     """
     return IndustriesResponse(
         industries=[
-            {"value": key, "label": INDUSTRY_LABELS[key]}
-            for key in SUPPORTED_INDUSTRIES
+            {"value": k, "label": INDUSTRY_LABELS[k]}
+            for k in SUPPORTED_INDUSTRIES
         ]
     )

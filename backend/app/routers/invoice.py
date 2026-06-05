@@ -1,6 +1,7 @@
 import logging
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Depends, Request
 from app.core.limiter import limiter
+from app.core.auth import get_current_user, AuthUser
 from app.core.supabase import get_supabase
 from app.models.invoice import UploadResponse, StructuredDocument
 
@@ -11,7 +12,16 @@ router = APIRouter(prefix="/invoice", tags=["Invoice"])
 
 @router.get("/{invoice_id}", response_model=UploadResponse)
 @limiter.limit("60/minute")
-async def get_invoice(request: Request, invoice_id: str):
+async def get_invoice(
+    request: Request,
+    invoice_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """
+    Fetch a single invoice by ID.
+    Only returns the invoice if it belongs to the authenticated user.
+    Requires: Authorization: Bearer <access_token>
+    """
     supabase = get_supabase()
 
     try:
@@ -19,6 +29,7 @@ async def get_invoice(request: Request, invoice_id: str):
             supabase.table("invoices")
             .select("*")
             .eq("id", invoice_id)
+            .eq("user_id", current_user.id)   # ownership check
             .single()
             .execute()
         )
@@ -42,22 +53,29 @@ async def get_invoice(request: Request, invoice_id: str):
 
 @router.delete("/{invoice_id}")
 @limiter.limit("30/minute")
-async def delete_invoice(request: Request, invoice_id: str, user_id: str = "test-user"):
+async def delete_invoice(
+    request: Request,
+    invoice_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+):
+    """
+    Deletes an invoice and its file from storage.
+    Only works on invoices belonging to the authenticated user.
+    Requires: Authorization: Bearer <access_token>
+    """
     supabase = get_supabase()
 
     result = (
         supabase.table("invoices")
         .select("user_id, file_url")
         .eq("id", invoice_id)
+        .eq("user_id", current_user.id)   # ownership check
         .single()
         .execute()
     )
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    if result.data["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not authorized")
 
     if result.data.get("file_url"):
         try:
@@ -66,5 +84,7 @@ async def delete_invoice(request: Request, invoice_id: str, user_id: str = "test
             logger.warning(f"Storage delete failed (non-fatal): {e}")
 
     supabase.table("invoices").delete().eq("id", invoice_id).execute()
+
+    logger.info(f"Invoice {invoice_id} deleted by user {current_user.id}")
 
     return {"message": "Deleted successfully"}

@@ -9,12 +9,23 @@ class Settings(BaseSettings):
 
     # Supabase
     supabase_url: str
-    supabase_anon_key: str      # frontend use only — never use in backend
-    supabase_service_key: str   # backend only — bypasses RLS
+    supabase_anon_key: str
+    supabase_service_key: str
 
     # Stripe
     stripe_secret_key: str
     stripe_webhook_secret: str
+
+    # Stripe Price IDs — create these in your Stripe dashboard
+    # Products → Add product → Add price → copy the price ID
+    stripe_price_starter: str = ""   
+    stripe_price_pro: str = ""        
+
+    # Google Sheets — from service account JSON file
+    google_project_id: str = ""
+    google_private_key_id: str = ""
+    google_private_key: str = ""      # paste full key with \n between lines
+    google_service_account_email: str = ""
 
     # App
     app_name: str = "InvoiAI"
@@ -28,6 +39,7 @@ class Settings(BaseSettings):
     ]
 
     # Plan limits — invoices per month
+    # Matches plan_type enum in schema.sql
     plan_limits: dict[str, int] = {
         "free": 10,
         "starter": 100,

@@ -1,16 +1,15 @@
 import uuid
 import logging
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Request
 from app.core.config import settings
 from app.core.limiter import limiter
+from app.core.auth import get_current_user, AuthUser
 from app.core.supabase import get_supabase
 from app.services.pdf_extractor import extract_text_from_pdf
 from app.services.gpt_extractor import extract_from_text, extract_from_image
 from app.services.validator import validate_document
-from app.models.invoice import (
-    UploadResponse,
-    SUPPORTED_INDUSTRIES,
-)
+from app.services.usage import check_usage_limit, increment_usage
+from app.models.invoice import UploadResponse, SUPPORTED_INDUSTRIES
 
 logger = logging.getLogger(__name__)
 
@@ -18,90 +17,107 @@ router = APIRouter(prefix="/upload", tags=["Upload"])
 
 
 @router.post("", response_model=UploadResponse)
-@limiter.limit("10/minute")         # max 10 uploads per minute per IP
-@limiter.limit("100/day")           # max 100 uploads per day per IP
+@limiter.limit("10/minute")
+@limiter.limit("100/day")
 async def upload_document(
-    request: Request,               # required by slowapi — must be first param
+    request: Request,
     file: UploadFile = File(...),
     industry: str = Form(default="general"),
-    user_id: str = Form(default="test-user"),
+    current_user: AuthUser = Depends(get_current_user),  # REAL AUTH
 ):
     """
-    Core upload endpoint.
+    Processes a document for the authenticated user.
 
-    Rate limits:
-      10/minute — prevents burst abuse (bot hammering the endpoint)
-      100/day   — prevents sustained abuse even at low rate
+    Requires: Authorization: Bearer <access_token> header
+    Form fields: file (PDF/image), industry (from supported list)
 
-    Why these numbers?
-      A real user processing invoices won't upload 10 in one minute.
-      100/day is generous for any legitimate user on any plan.
-      After auth is added (Phase 4) we'll add per-user limits
-      based on their subscription plan on top of these IP limits.
+    Pipeline:
+    1. Validate JWT → get real user
+    2. Check monthly usage limit for their plan
+    3. Validate file
+    4. Extract text or use Vision
+    5. Validate extracted data
+    6. Save to storage + DB
+    7. Increment usage count
+    8. Return structured result
     """
 
-    _validate_file(file)
-    _validate_industry(industry)
+    # ── Usage limit check (before any processing) ─────────────────────────────
+    # Checked first so we don't waste OpenAI credits on users over their limit
+    await check_usage_limit(current_user.id, current_user.plan)
+
+    # ── File validation ───────────────────────────────────────────────────────
+    if file.content_type not in settings.allowed_file_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{file.content_type}' not supported. Accepted: PDF, JPEG, PNG, WEBP"
+        )
+
+    if industry not in SUPPORTED_INDUSTRIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Industry '{industry}' not supported. Call GET /industries for the list."
+        )
 
     file_bytes = await file.read()
-    _validate_size(file_bytes)
+
+    if len(file_bytes) > settings.max_file_size_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum is {settings.max_file_size_mb}MB."
+        )
 
     invoice_id = str(uuid.uuid4())
     mime_type = file.content_type
     raw_text = ""
 
     logger.info(
-        f"[{invoice_id}] Processing '{file.filename}' "
-        f"| industry={industry} | type={mime_type}"
+        f"[{invoice_id}] user={current_user.id} "
+        f"file={file.filename} industry={industry} plan={current_user.plan}"
     )
 
     # ── Extraction ────────────────────────────────────────────────────────────
     try:
         if mime_type == "application/pdf":
             raw_text, is_digital = extract_text_from_pdf(file_bytes)
-
             if is_digital:
-                logger.info(f"[{invoice_id}] Digital PDF → pdfplumber + GPT-4o-mini")
+                logger.info(f"[{invoice_id}] Digital PDF → GPT-4o-mini")
                 structured = await extract_from_text(raw_text, industry)
             else:
                 logger.info(f"[{invoice_id}] Scanned PDF → GPT-4o Vision")
-                raw_text, structured = await extract_from_image(
-                    file_bytes, "image/png", industry
-                )
+                raw_text, structured = await extract_from_image(file_bytes, "image/png", industry)
         else:
             logger.info(f"[{invoice_id}] Image → GPT-4o Vision")
-            raw_text, structured = await extract_from_image(
-                file_bytes, mime_type, industry
-            )
+            raw_text, structured = await extract_from_image(file_bytes, mime_type, industry)
 
     except Exception as e:
         logger.error(f"[{invoice_id}] Extraction failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Document processing failed. Please try again."
-        )
+        raise HTTPException(status_code=500, detail="Document processing failed. Please try again.")
 
     # ── Validate ──────────────────────────────────────────────────────────────
     warnings = validate_document(structured)
 
-    # ── Save ──────────────────────────────────────────────────────────────────
+    # ── Save to Supabase ──────────────────────────────────────────────────────
     supabase = get_supabase()
 
-    file_path = f"{user_id}/{invoice_id}/{file.filename}"
+    # Storage — file goes to: invoices/{user_id}/{invoice_id}/{filename}
+    file_path = f"{current_user.id}/{invoice_id}/{file.filename}"
     try:
         supabase.storage.from_("invoices").upload(
             path=file_path,
             file=file_bytes,
             file_options={"content-type": mime_type}
         )
+        logger.info(f"[{invoice_id}] Stored at {file_path}")
     except Exception as e:
         logger.warning(f"[{invoice_id}] Storage upload failed (non-fatal): {e}")
         file_path = ""
 
+    # DB record
     try:
         supabase.table("invoices").insert({
             "id": invoice_id,
-            "user_id": user_id,
+            "user_id": current_user.id,        # real UUID from JWT
             "file_url": file_path,
             "file_name": file.filename,
             "file_type": "pdf" if mime_type == "application/pdf" else "image",
@@ -117,11 +133,10 @@ async def upload_document(
         logger.error(f"[{invoice_id}] DB save failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to save document record.")
 
-    logger.info(
-        f"[{invoice_id}] Complete | "
-        f"warnings={len(warnings)} | "
-        f"confidence={structured.extraction_confidence}"
-    )
+    # ── Increment usage AFTER successful save ─────────────────────────────────
+    await increment_usage(current_user.id)
+
+    logger.info(f"[{invoice_id}] Done | warnings={len(warnings)} | confidence={structured.extraction_confidence}")
 
     return UploadResponse(
         invoice_id=invoice_id,
@@ -130,30 +145,3 @@ async def upload_document(
         structured_data=structured,
         validation_warnings=warnings,
     )
-
-
-def _validate_file(file: UploadFile) -> None:
-    if file.content_type not in settings.allowed_file_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type '{file.content_type}' not supported. "
-                   f"Accepted: PDF, JPEG, PNG, WEBP"
-        )
-
-
-def _validate_industry(industry: str) -> None:
-    if industry not in SUPPORTED_INDUSTRIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Industry '{industry}' not supported. "
-                   f"Use GET /industries for the full list."
-        )
-
-
-def _validate_size(file_bytes: bytes) -> None:
-    max_bytes = settings.max_file_size_mb * 1024 * 1024
-    if len(file_bytes) > max_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum is {settings.max_file_size_mb}MB."
-        )
