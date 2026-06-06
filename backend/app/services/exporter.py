@@ -8,116 +8,96 @@ from app.models.invoice import StructuredDocument
 
 logger = logging.getLogger(__name__)
 
-# ── Styles ────────────────────────────────────────────────────────────────────
 HEADER_FILL = PatternFill(start_color="1E3A5F", end_color="1E3A5F", fill_type="solid")
 HEADER_FONT = Font(color="FFFFFF", bold=True, size=11)
-SECTION_TITLE_FONT = Font(bold=True, size=12, color="1E3A5F")
-ALT_ROW_FILL = PatternFill(start_color="F0F4F8", end_color="F0F4F8", fill_type="solid")
+SECTION_FONT = Font(bold=True, size=12, color="1E3A5F")
+ALT_FILL = PatternFill(start_color="F0F4F8", end_color="F0F4F8", fill_type="solid")
+
+# ── Preferred column order for common line item fields ────────────────────────
+# When GPT returns line items we enforce this display order.
+# Any fields not in this list go at the end in whatever order they arrive.
+PREFERRED_LINE_ITEM_ORDER = [
+    "description", "quantity", "unit_price", "unit_cost",
+    "rate", "hours", "amount", "total", "subtotal",
+    "tax", "discount", "sku", "product_code", "variant",
+]
 
 
 def export_to_excel(doc: StructuredDocument) -> bytes:
     """
-    Dynamically generates an Excel file from any StructuredDocument.
-
-    Structure:
-      - Sheet 1: Document Summary (document type, industry, totals)
-      - One sheet per section GPT extracted
-        - dict sections → key/value layout
-        - list sections → table layout with headers
-
-    This is fully dynamic — no hardcoded columns anywhere.
-    Works for invoices, audit reports, tax returns, anything.
+    Generates a formatted Excel file.
+    Sheet 1: Summary with document info and totals.
+    One sheet per section GPT extracted.
     """
     wb = Workbook()
-
-    # Sheet 1: Summary
     _build_summary_sheet(wb, doc)
 
-    # One sheet per section
-    for section_name, section_data in doc.sections.items():
-        sheet_title = _to_sheet_title(section_name)
+    for name, data in doc.sections.items():
+        title = name.replace("_", " ").title()[:31]
+        if isinstance(data, list) and data:
+            _build_table_sheet(wb, title, data)
+        elif isinstance(data, dict) and data:
+            _build_keyvalue_sheet(wb, title, data)
 
-        if isinstance(section_data, list) and section_data:
-            _build_table_sheet(wb, sheet_title, section_data)
-        elif isinstance(section_data, dict) and section_data:
-            _build_keyvalue_sheet(wb, sheet_title, section_data)
-        # skip empty sections
-
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-
-    logger.info(f"Excel export generated — {len(doc.sections)} section sheets")
-    return buffer.getvalue()
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    logger.info(f"Excel export: {len(doc.sections)} section sheets")
+    return buf.getvalue()
 
 
 def export_to_csv(doc: StructuredDocument) -> bytes:
     """
-    Exports all sections to a single CSV.
-    Each section is separated by a blank row and a section title row.
-    List sections get table headers. Dict sections get key/value rows.
+    Generates a CSV with all sections separated by headers.
     """
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
+    buf = io.StringIO()
+    w = csv.writer(buf)
 
-    # Document header
-    writer.writerow(["InvoiAI Export"])
-    writer.writerow(["Document Type", doc.document_type])
-    writer.writerow(["Industry", doc.industry])
-    writer.writerow(["Confidence", doc.extraction_confidence or ""])
-    writer.writerow([])
+    w.writerow(["InvoiAI Export"])
+    w.writerow(["Document Type", doc.document_type])
+    w.writerow(["Industry", doc.industry])
+    w.writerow(["Confidence", doc.extraction_confidence or ""])
+    w.writerow([])
 
-    # Totals summary
     if doc.raw_totals:
-        writer.writerow(["=== TOTALS ==="])
-        for key, value in doc.raw_totals.items():
-            writer.writerow([_to_label(key), value])
-        writer.writerow([])
+        w.writerow(["=== TOTALS ==="])
+        for k, v in doc.raw_totals.items():
+            w.writerow([_label(k), v])
+        w.writerow([])
 
-    # Each section
-    for section_name, section_data in doc.sections.items():
-        writer.writerow([f"=== {section_name.upper().replace('_', ' ')} ==="])
+    for name, data in doc.sections.items():
+        w.writerow([f"=== {name.upper().replace('_', ' ')} ==="])
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            keys = _ordered_keys(data)
+            w.writerow([_label(k) for k in keys])
+            for row in data:
+                w.writerow([row.get(k, "") for k in keys])
+        elif isinstance(data, dict):
+            for k, v in data.items():
+                w.writerow([_label(k), v if v is not None else ""])
+        w.writerow([])
 
-        if isinstance(section_data, list) and section_data:
-            # Table: headers from first row keys
-            if isinstance(section_data[0], dict):
-                headers = list(section_data[0].keys())
-                writer.writerow([_to_label(h) for h in headers])
-                for row in section_data:
-                    writer.writerow([row.get(h, "") for h in headers])
-
-        elif isinstance(section_data, dict):
-            for key, value in section_data.items():
-                writer.writerow([_to_label(key), value if value is not None else ""])
-
-        writer.writerow([])
-
-    logger.info("CSV export generated")
-    return buffer.getvalue().encode("utf-8")
+    return buf.getvalue().encode("utf-8")
 
 
 # ── Sheet builders ─────────────────────────────────────────────────────────────
 
 def _build_summary_sheet(wb: Workbook, doc: StructuredDocument) -> None:
-    """
-    First sheet — document metadata and all monetary totals.
-    """
     ws = wb.active
     ws.title = "Summary"
-
-    # Document info block
-    info_rows = [
-        ("Document Type", doc.document_type),
-        ("Industry", doc.industry),
-        ("Extraction Confidence", doc.extraction_confidence or ""),
-        ("Sections Extracted", len(doc.sections)),
-    ]
-
     row = 1
-    ws.cell(row=row, column=1, value="DOCUMENT SUMMARY").font = SECTION_TITLE_FONT
+
+    # Title
+    ws.cell(row=row, column=1, value="DOCUMENT SUMMARY").font = SECTION_FONT
     row += 1
 
-    for label, value in info_rows:
+    # Document info rows
+    for label, value in [
+        ("Document Type", doc.document_type),
+        ("Industry", doc.industry),
+        ("Confidence", doc.extraction_confidence or ""),
+        ("Sections", len(doc.sections)),
+    ]:
         ws.cell(row=row, column=1, value=label).font = Font(bold=True)
         ws.cell(row=row, column=2, value=value)
         row += 1
@@ -126,127 +106,122 @@ def _build_summary_sheet(wb: Workbook, doc: StructuredDocument) -> None:
 
     # Totals block
     if doc.raw_totals:
-        ws.cell(row=row, column=1, value="TOTALS").font = SECTION_TITLE_FONT
+        ws.cell(row=row, column=1, value="TOTALS").font = SECTION_FONT
         row += 1
 
-        # Header
-        ws.cell(row=row, column=1, value="Field").fill = HEADER_FILL
-        ws.cell(row=row, column=1).font = HEADER_FONT
-        ws.cell(row=row, column=2, value="Amount").fill = HEADER_FILL
-        ws.cell(row=row, column=2).font = HEADER_FONT
+        # Header row for totals
+        for col, val in [(1, "Field"), (2, "Amount")]:
+            cell = ws.cell(row=row, column=col, value=val)
+            cell.fill = HEADER_FILL
+            cell.font = HEADER_FONT
+            cell.alignment = Alignment(horizontal="left")
         row += 1
 
-        for key, value in doc.raw_totals.items():
-            ws.cell(row=row, column=1, value=_to_label(key))
-            ws.cell(row=row, column=2, value=value)
+        for k, v in doc.raw_totals.items():
+            ws.cell(row=row, column=1, value=_label(k))
+            ws.cell(row=row, column=2, value=v)
             row += 1
 
-    _set_column_widths(ws, [30, 30])
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 30
 
 
 def _build_table_sheet(wb: Workbook, title: str, data: list) -> None:
     """
-    Builds a sheet for list sections (line items, findings, transactions etc.)
-    Each item in the list becomes a row. Keys of first item become headers.
-    Alternating row colors for readability.
+    Table layout for list sections (line items, findings, transactions).
+    Uses PREFERRED_LINE_ITEM_ORDER to put columns in the right order.
     """
     ws = wb.create_sheet(title=title)
-
     if not data or not isinstance(data[0], dict):
         return
 
-    # Collect all unique keys across all rows
-    # (some rows might have different fields — we handle that)
-    all_keys: list[str] = []
-    seen = set()
-    for row in data:
-        for key in row.keys():
-            if key not in seen:
-                all_keys.append(key)
-                seen.add(key)
+    # Get keys in preferred order
+    keys = _ordered_keys(data)
 
     # Header row
-    for col_idx, key in enumerate(all_keys, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=_to_label(key))
+    for ci, k in enumerate(keys, 1):
+        cell = ws.cell(row=1, column=ci, value=_label(k))
         cell.fill = HEADER_FILL
         cell.font = HEADER_FONT
         cell.alignment = Alignment(horizontal="left")
 
     # Data rows with alternating fill
-    for row_idx, row_data in enumerate(data, start=2):
-        fill = ALT_ROW_FILL if row_idx % 2 == 0 else None
-        for col_idx, key in enumerate(all_keys, start=1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=row_data.get(key))
+    for ri, row in enumerate(data, 2):
+        fill = ALT_FILL if ri % 2 == 0 else None
+        for ci, k in enumerate(keys, 1):
+            cell = ws.cell(row=ri, column=ci, value=row.get(k))
             if fill:
                 cell.fill = fill
 
-    # Auto-size columns based on content
-    _auto_size_columns(ws, all_keys)
+    # Auto-size columns
+    for i, k in enumerate(keys, 1):
+        ws.column_dimensions[get_column_letter(i)].width = min(
+            max(len(_label(k)) + 4, 12), 50
+        )
 
 
 def _build_keyvalue_sheet(wb: Workbook, title: str, data: dict) -> None:
     """
-    Builds a sheet for dict sections (header info, party details, summary fields).
+    Key-value layout for dict sections (header info, party details).
     Two columns: Field | Value.
-    Handles nested dicts as sub-sections.
     """
     ws = wb.create_sheet(title=title)
 
     # Header
-    ws.cell(row=1, column=1, value="Field").fill = HEADER_FILL
-    ws.cell(row=1, column=1).font = HEADER_FONT
-    ws.cell(row=1, column=2, value="Value").fill = HEADER_FILL
-    ws.cell(row=1, column=2).font = HEADER_FONT
+    for col, val in [(1, "Field"), (2, "Value")]:
+        cell = ws.cell(row=1, column=col, value=val)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="left")
 
     row = 2
-    for key, value in data.items():
-        if isinstance(value, dict):
-            # Nested dict — add a sub-header then expand its fields
-            ws.cell(row=row, column=1, value=_to_label(key)).font = Font(bold=True, italic=True)
+    for k, v in data.items():
+        if isinstance(v, dict):
+            # Nested dict — sub-header then its fields
+            ws.cell(row=row, column=1, value=_label(k)).font = Font(bold=True, italic=True)
             row += 1
-            for sub_key, sub_value in value.items():
-                ws.cell(row=row, column=1, value=f"  {_to_label(sub_key)}")
-                ws.cell(row=row, column=2, value=sub_value)
+            for sk, sv in v.items():
+                ws.cell(row=row, column=1, value=f"  {_label(sk)}")
+                ws.cell(row=row, column=2, value=sv)
                 row += 1
-        elif isinstance(value, list):
-            # Flatten short lists as comma-separated strings
-            ws.cell(row=row, column=1, value=_to_label(key))
-            ws.cell(row=row, column=2, value=", ".join(str(v) for v in value))
+        elif isinstance(v, list):
+            ws.cell(row=row, column=1, value=_label(k))
+            ws.cell(row=row, column=2, value=", ".join(str(i) for i in v))
             row += 1
         else:
-            ws.cell(row=row, column=1, value=_to_label(key))
-            ws.cell(row=row, column=2, value=value)
+            ws.cell(row=row, column=1, value=_label(k))
+            ws.cell(row=row, column=2, value=v if v is not None else "")
             row += 1
 
-    _set_column_widths(ws, [30, 50])
+    ws.column_dimensions["A"].width = 30
+    ws.column_dimensions["B"].width = 60
 
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _to_sheet_title(name: str) -> str:
+def _ordered_keys(data: list[dict]) -> list[str]:
     """
-    Converts snake_case section name to a readable Excel sheet title.
-    Excel sheet names max 31 chars.
+    Returns column keys in preferred display order.
+
+    Collects all unique keys from all rows first (some rows may have
+    different fields). Then sorts them: preferred fields first in the
+    order defined in PREFERRED_LINE_ITEM_ORDER, then any remaining
+    fields alphabetically at the end.
     """
-    title = name.replace("_", " ").title()
-    return title[:31]
+    all_keys: list[str] = []
+    seen: set = set()
+    for row in data:
+        for k in row.keys():
+            if k not in seen:
+                all_keys.append(k)
+                seen.add(k)
+
+    # Sort by preferred order
+    preferred = [k for k in PREFERRED_LINE_ITEM_ORDER if k in seen]
+    remaining = sorted([k for k in all_keys if k not in PREFERRED_LINE_ITEM_ORDER])
+    return preferred + remaining
 
 
-def _to_label(key: str) -> str:
-    """Converts snake_case keys to Title Case labels for display."""
+def _label(key: str) -> str:
+    """Converts snake_case to Title Case for display."""
     return key.replace("_", " ").title()
-
-
-def _set_column_widths(ws, widths: list[int]) -> None:
-    for i, width in enumerate(widths, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-
-
-def _auto_size_columns(ws, keys: list[str]) -> None:
-    """
-    Sets column widths based on header length.
-    Capped at 40 chars to prevent absurdly wide columns.
-    """
-    for i, key in enumerate(keys, start=1):
-        width = min(max(len(_to_label(key)) + 4, 12), 40)
-        ws.column_dimensions[get_column_letter(i)].width = width

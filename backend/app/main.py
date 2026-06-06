@@ -7,7 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.core.config import settings
 from app.core.limiter import limiter
-from app.routers import upload, invoice, history, export, industries
+from app.routers import upload, invoice, history, export, industries, auth, billing, stripe_webhook
  
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -71,6 +71,9 @@ app.include_router(invoice.router)
 app.include_router(history.router)
 app.include_router(export.router)
 app.include_router(industries.router)
+app.include_router(auth.router)
+app.include_router(billing.router)
+app.include_router(stripe_webhook.router)
  
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
