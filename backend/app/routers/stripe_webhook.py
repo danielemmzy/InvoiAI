@@ -1,5 +1,6 @@
 import stripe
 import logging
+import asyncio
 from fastapi import APIRouter, Request, HTTPException
 from app.core.config import settings
 from app.core.supabase import get_supabase
@@ -61,59 +62,152 @@ async def stripe_webhook(request: Request):
         logger.error(f"Webhook parse error: {e}")
         raise HTTPException(status_code=400, detail="Webhook error")
 
-    logger.info(f"Stripe webhook received: {event['type']}")
+    logger.info("=" * 80)
+    logger.info(f"EVENT TYPE = {event['type']}")
+    logger.info("=" * 80)
+    logger.info("WEBHOOK FILE VERSION 12345")
 
     # Route to the correct handler
     event_type = event["type"]
     data = event["data"]["object"]
 
+    logger.info("=" * 80)
+    logger.info(f"STRIPE EVENT RECEIVED: {event_type}")
+    logger.info(f"EVENT OBJECT ID: {data}")
+    logger.info("=" * 80)
+
     if event_type == "checkout.session.completed":
-        await _handle_checkout_completed(data)
+        logger.info("ENTERING CHECKOUT SESSION HANDLER")
+
+        try:
+            await _handle_checkout_completed(data)
+        except Exception as e:
+            logger.exception(
+                f"checkout.session.completed crashed: {e}"
+            )
+            raise
 
     elif event_type == "customer.subscription.updated":
-        await _handle_subscription_updated(data)
+        logger.info("CUSTOMER SUBSCRIPTION UPDATED")
+
+        try:
+            await _handle_subscription_updated(data)
+        except Exception as e:
+            logger.exception(
+                f"customer.subscription.updated crashed: {e}"
+            )
+            raise
 
     elif event_type == "customer.subscription.deleted":
-        await _handle_subscription_deleted(data)
+        logger.info("CUSTOMER SUBSCRIPTION DELETED")
+
+        try:
+            await _handle_subscription_deleted(data)
+        except Exception as e:
+            logger.exception(
+                f"customer.subscription.deleted crashed: {e}"
+            )
+            raise
 
     elif event_type == "invoice.payment_failed":
-        await _handle_payment_failed(data)
+        logger.info("INVOICE PAYMENT FAILED")
 
-    # Always return 200 to Stripe — even for unhandled events
-    # If we return 4xx Stripe will retry the webhook repeatedly
+        try:
+            await _handle_payment_failed(data)
+        except Exception as e:
+            logger.exception(
+                f"invoice.payment_failed crashed: {e}"
+            )
+            raise
+
+    elif event_type == "invoice.payment_succeeded":
+        logger.info("INVOICE PAYMENT SUCCEEDED")
+
+    else:
+        logger.info(f"Unhandled Stripe event: {event_type}")
+
     return {"received": True}
 
 
 async def _handle_checkout_completed(session: dict):
     """
-    User completed the Stripe checkout.
-    Link their Stripe customer ID to their profile
-    and upgrade their plan.
+    User completed checkout.
+    Upgrade plan and create subscription record.
     """
+    session = session.to_dict()
+
+    logger.info("=" * 80)
+    logger.info("CHECKOUT COMPLETED HANDLER STARTED")
+    logger.info(f"SESSION ID: {session.get('id')}")
+    logger.info(f"SESSION DATA: {session}")
+    logger.info("=" * 80)
+
     supabase = get_supabase()
 
     customer_id = session.get("customer")
-    client_reference_id = session.get("client_reference_id")  # our user_id
+    client_reference_id = session.get("client_reference_id")
     subscription_id = session.get("subscription")
 
-    if not client_reference_id or not customer_id:
-        logger.warning("Checkout session missing user reference")
+    logger.info(
+        f"customer_id={customer_id} | "
+        f"user_id={client_reference_id} | "
+        f"subscription_id={subscription_id}"
+    )
+
+    if not client_reference_id:
+        logger.error("client_reference_id missing from checkout session")
         return
 
-    # Get subscription details to find the plan
+    if not customer_id:
+        logger.error("customer_id missing from checkout session")
+        return
+
+    if not subscription_id:
+        logger.error("subscription_id missing from checkout session")
+        return
+
     try:
-        subscription = stripe.Subscription.retrieve(subscription_id)
+        logger.info(f"Retrieving Stripe subscription: {subscription_id}")
+
+        subscription = await asyncio.get_event_loop().run_in_executor(
+    None, stripe.Subscription.retrieve, subscription_id
+)
+        subscription = subscription.to_dict()
+
+        logger.info("ABOUT TO RETRIEVE SUBSCRIPTION")
+        logger.info(f"SUBSCRIPTION ID = {subscription_id}")
+
+        logger.info(f"SUBSCRIPTION RESPONSE: {subscription}")
+
         price_id = subscription["items"]["data"][0]["price"]["id"]
+
+        logger.info(f"PRICE ID FROM STRIPE: {price_id}")
+        logger.info(f"PRICE MAP: {PRICE_TO_PLAN}")
+
         plan = PRICE_TO_PLAN.get(price_id, "free")
 
-        # Save stripe_customer_id to profiles
-        supabase.table("profiles").update({
-            "stripe_customer_id": customer_id,
-            "plan": plan,
-        }).eq("id", client_reference_id).execute()
+        logger.info(f"MAPPED PLAN: {plan}")
 
-        # Create subscription record
-        supabase.table("subscriptions").upsert({
+        logger.info(
+            f"Updating profile | "
+            f"user={client_reference_id} | "
+            f"customer={customer_id} | "
+            f"plan={plan}"
+        )
+
+        profile_result = (
+            supabase.table("profiles")
+            .update({
+                "stripe_customer_id": customer_id,
+                "plan": plan,
+            })
+            .eq("id", client_reference_id)
+            .execute()
+        )
+
+        logger.info(f"PROFILE UPDATE RESULT: {profile_result}")
+
+        subscription_payload = {
             "user_id": client_reference_id,
             "stripe_subscription_id": subscription_id,
             "stripe_price_id": price_id,
@@ -121,12 +215,30 @@ async def _handle_checkout_completed(session: dict):
             "status": "active",
             "current_period_start": _ts(subscription["current_period_start"]),
             "current_period_end": _ts(subscription["current_period_end"]),
-        }).execute()
+        }
 
-        logger.info(f"User {client_reference_id} upgraded to {plan}")
+        logger.info(
+            f"UPSERTING SUBSCRIPTION RECORD: {subscription_payload}"
+        )
+
+        subscription_result = (
+            supabase.table("subscriptions")
+            .upsert(subscription_payload)
+            .execute()
+        )
+
+        logger.info(
+            f"SUBSCRIPTION UPSERT RESULT: {subscription_result}"
+        )
+
+        logger.info(
+            f"SUCCESS: User {client_reference_id} upgraded to {plan}"
+        )
 
     except Exception as e:
-        logger.error(f"Checkout handler error: {e}")
+        logger.exception(
+            f"CHECKOUT HANDLER FAILED FOR USER {client_reference_id}: {e}"
+        )
 
 
 async def _handle_subscription_updated(subscription: dict):

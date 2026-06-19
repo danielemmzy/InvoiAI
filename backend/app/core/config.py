@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Plan limits — invoices per month
     # Matches plan_type enum in schema.sql
     plan_limits: dict[str, int] = {
-        "free": 10,
+        "free": 5,
         "starter": 100,
         "pro": 500,
     }
