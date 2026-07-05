@@ -8,6 +8,7 @@ import toast from "react-hot-toast";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { useBilling } from "@/hooks/useBilling";
 import { useAppStore } from "@/store/useAppStore";
+import { useQueryClient } from "@tanstack/react-query";
 
 const PLANS = [
   {
@@ -41,15 +42,21 @@ export default function BillingPage() {
   const { user } = useAppStore();
   const { billing, isLoading, startCheckout, isCheckingOut, cancelSubscription, isCancelling } = useBilling();
   const currentPlan = user?.plan || "free";
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    if (searchParams?.get("success") === "true") {
-      toast.success("Payment successful! Your plan has been upgraded.");
-    }
-    if (searchParams?.get("cancelled") === "true") {
-      toast.error("Payment cancelled.");
-    }
-  }, [searchParams]);
+useEffect(() => {
+  if (searchParams?.get("success") === "true") {
+    // Wait 2s for webhook to finish updating the plan
+    setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      queryClient.invalidateQueries({ queryKey: ["billing"] });
+    }, 2000);
+    toast.success("Payment successful! Your plan has been upgraded.");
+  }
+  if (searchParams?.get("cancelled") === "true") {
+    toast.error("Payment cancelled.");
+  }
+}, [searchParams]);
 
   return (
     <DashboardLayout>

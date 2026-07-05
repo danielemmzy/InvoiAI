@@ -12,7 +12,8 @@ export function useBilling() {
   const { data: billing, isLoading } = useQuery({
     queryKey: ["billing"],
     queryFn: billingApi.getSubscription,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
 
   // Start Stripe checkout — redirects to Stripe hosted page

@@ -19,7 +19,9 @@ export function useAuth() {
       return data;
     },
     enabled: isAuthenticated,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
 
   // Signup

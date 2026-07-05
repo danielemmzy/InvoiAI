@@ -103,7 +103,6 @@ export const useAppStore = create<AppState>()(
       },
 
       partialize: (state) => ({
-        user: state.user,
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,
       }),
