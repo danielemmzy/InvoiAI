@@ -207,14 +207,18 @@ async def _handle_checkout_completed(session: dict):
 
         logger.info(f"PROFILE UPDATE RESULT: {profile_result}")
 
+        item = subscription["items"]["data"][0]
+        current_period_start = item.get("current_period_start") or subscription.get("current_period_start")
+        current_period_end = item.get("current_period_end") or subscription.get("current_period_end")
+
         subscription_payload = {
             "user_id": client_reference_id,
             "stripe_subscription_id": subscription_id,
             "stripe_price_id": price_id,
             "plan": plan,
             "status": "active",
-            "current_period_start": _ts(subscription["current_period_start"]),
-            "current_period_end": _ts(subscription["current_period_end"]),
+            "current_period_start": _ts(current_period_start),
+            "current_period_end": _ts(current_period_end),
         }
 
         logger.info(
