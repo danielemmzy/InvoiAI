@@ -9,12 +9,7 @@ from app.core.config import settings
 from app.core.limiter import limiter
 from app.routers import upload, invoice, history, export, industries, auth, billing, stripe_webhook
  
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
- 
-logger = logging.getLogger(__name__)
+
  
 app = FastAPI(
     title="InvoiAI",
