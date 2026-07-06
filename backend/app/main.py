@@ -11,6 +11,7 @@ from app.routers import upload, invoice, history, export, industries, auth, bill
 from app.core.logging import configure_logging
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.middleware.exception_logging import ExceptionLoggingMiddleware
+from asgi_correlation_id import CorrelationIdMiddleware
  
 
 configure_logging()
@@ -42,6 +43,10 @@ app.add_middleware(
 
 app.add_middleware(ExceptionLoggingMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(
+    CorrelationIdMiddleware,
+    header_name="X-Request-ID",
+)
  
 # ── Proxy trust ───────────────────────────────────────────────────────────────
 # When deployed behind Cloudflare or Nginx, the real client IP
