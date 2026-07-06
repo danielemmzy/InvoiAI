@@ -3,12 +3,20 @@ import sys
 
 import structlog
 from app.core.config import settings
+from asgi_correlation_id import correlation_id
 
 
 def configure_logging():
     timestamper = structlog.processors.TimeStamper(fmt="iso")
 
+    def add_request_id(_, __, event_dict):
+
+        event_dict["request_id"] = correlation_id.get() or "-"
+        return event_dict
+
+
     shared_processors = [
+        add_request_id,
         structlog.stdlib.add_log_level,
         timestamper,
     ]
