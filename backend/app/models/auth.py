@@ -1,6 +1,5 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Any, Optional
-from datetime import datetime
+from pydantic import BaseModel, EmailStr
+from typing import Any
 
 class SignUpRequest(BaseModel):
     email: EmailStr
