@@ -1,4 +1,3 @@
-import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -8,9 +7,14 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.core.config import settings
 from app.core.limiter import limiter
 from app.routers import upload, invoice, history, export, industries, auth, billing, stripe_webhook
+
+from app.core.logging import configure_logging
+from app.middleware.request_logging import RequestLoggingMiddleware
+from app.middleware.exception_logging import ExceptionLoggingMiddleware
  
 
- 
+configure_logging()
+
 app = FastAPI(
     title="InvoiAI",
     description="Transform any business document into structured data instantly.",
@@ -35,6 +39,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(ExceptionLoggingMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
  
 # ── Proxy trust ───────────────────────────────────────────────────────────────
 # When deployed behind Cloudflare or Nginx, the real client IP
