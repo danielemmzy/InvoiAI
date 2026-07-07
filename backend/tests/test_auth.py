@@ -1,6 +1,5 @@
 from unittest.mock import MagicMock
 
-from app.main import app
 
 
 def test_signup_password_too_short(client):
