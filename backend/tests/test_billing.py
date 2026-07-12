@@ -28,12 +28,24 @@ def cleanup():
     app.dependency_overrides[get_current_user] = override_user
 
 
-def test_get_price_id_known():
-    assert billing.get_price_id("starter")
-    assert billing.get_price_id("pro")
+def test_get_price_id_known(mocker):
+    mocker.patch.object(
+        billing.settings,
+        "stripe_price_starter",
+        "price_test_starter",
+    )
+
+    mocker.patch.object(
+        billing.settings,
+        "stripe_price_pro",
+        "price_test_pro",
+    )
+
+    assert billing.get_price_id("starter") == "price_test_starter"
+    assert billing.get_price_id("pro") == "price_test_pro"
 
 
-def test_get_price_id_unknown():
+def test_get_price_id_unknown(mocker):
     assert billing.get_price_id("gold") == ""
 
 def test_checkout_invalid_plan():
