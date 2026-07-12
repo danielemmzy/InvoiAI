@@ -1,6 +1,5 @@
 from types import SimpleNamespace
 
-import stripe
 import pytest
 from fastapi.testclient import TestClient
 

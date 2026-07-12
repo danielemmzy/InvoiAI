@@ -1,5 +1,3 @@
-import pytest
-
 from app.models.invoice import StructuredDocument
 from app.services.validator import validate_document, _check_totals, _find
 
