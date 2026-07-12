@@ -56,7 +56,6 @@ app.add_middleware(
 # IMPORTANT: only enable this when behind a trusted proxy.
 # In local dev it has no effect.
 if not settings.debug:
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
     from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
  
