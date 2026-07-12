@@ -6,11 +6,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FileText, Upload,
-  History, CreditCard, Settings,
+   CreditCard, Settings,
   LogOut, Zap,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { useAppStore } from "@/store/useAppStore";
 import { cn } from "@/lib/utils";
 
 const NAV_GROUPS = [

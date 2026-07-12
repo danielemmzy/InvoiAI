@@ -29,7 +29,7 @@ export default function LoginPage() {
         </div>
         <div>
           <p className="auth-panel-quote serif">
-            "InvoiAI cut our invoice processing time from 4 hours to 8 minutes."
+            &ldquo;InvoiAI cut our invoice processing time from 4 hours to 8 minutes.&rdquo;
           </p>
           <p className="auth-panel-author">Chidi O. · Finance Manager, Lagos</p>
         </div>

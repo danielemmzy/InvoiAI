@@ -4,9 +4,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, Upload, Zap, LogOut, LayoutDashboard, FileText, CreditCard, Settings } from "lucide-react";
+import { Menu, X, Upload, Zap, LogOut } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
-import { useAppStore } from "@/store/useAppStore";
 
 const NAV = [
   {
