@@ -67,10 +67,10 @@ export function useAuth() {
     router.push("/dashboard");
   },
 
-  onError: (error: any) => {
+  onError: (error: unknown) => {
     console.error(error);
     toast.error(
-      error?.response?.data?.detail ||
+      getErrorMessage(error) ??
       "Invalid email or password."
     );
   },

@@ -2,7 +2,6 @@
 // Dashboard Overview — /dashboard
 
 import Link from "next/link";
-import { Upload } from "lucide-react";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { useAppStore } from "@/store/useAppStore";
 import { useDocuments } from "@/hooks/useDocuments";

@@ -89,7 +89,7 @@ export const useAppStore = create<AppState>()(
 
       version: 2,
 
-      migrate: (persistedState: any, version) => {
+      migrate: (persistedState: unknown, version) => {
         if (version < 2) {
           return {
             user: null,

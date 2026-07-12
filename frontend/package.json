@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --webpack",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
+  "dev": "next dev --webpack",
+  "build": "next build",
+  "start": "next start",
+  "lint": "eslint .",
+  "type-check": "tsc --noEmit"
+},
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
     "@radix-ui/react-dialog": "^1.1.16",
