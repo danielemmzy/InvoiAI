@@ -1,0 +1,45 @@
+services:
+
+  backend:
+
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    container_name: invoiai-backend
+
+    env_file:
+      - backend/.env
+
+    ports:
+      - "8000:8000"
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+
+
+  frontend:
+
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+
+    container_name: invoiai-frontend
+
+    env_file:
+      - frontend/.env.local
+
+    ports:
+      - "3000:3000"
+
+    depends_on:
+      backend:
+        condition: service_healthy
+
+    restart: unless-stopped
