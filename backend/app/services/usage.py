@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, UTC
 from fastapi import HTTPException, status
 from app.core.supabase import get_supabase
 from app.core.config import settings
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_current_month() -> str:
-    return datetime.now().strftime("%Y-%m")
+    return datetime.now(UTC).strftime("%Y-%m")
 
 
 async def check_usage_limit(user_id: str, plan: str) -> None:
@@ -30,21 +30,13 @@ async def check_usage_limit(user_id: str, plan: str) -> None:
             .execute()
         )
 
-        current_count = (
-            result.data.get("invoice_count", 0)
-            if result.data
-            else 0
-        )
+        current_count = result.data.get("invoice_count", 0) if result.data else 0
 
     except Exception as e:
-        logger.error(
-            f"Usage lookup failed for {user_id}: {e}"
-        )
+        logger.error(f"Usage lookup failed for {user_id}: {e}")
         current_count = 0
 
-    logger.info(
-        f"USAGE CHECK | user={user_id} | used={current_count}/{limit}"
-    )
+    logger.info(f"USAGE CHECK | user={user_id} | used={current_count}/{limit}")
 
     if current_count >= limit:
         raise HTTPException(
@@ -93,11 +85,7 @@ async def increment_usage(user_id: str) -> None:
 
             insert_result = (
                 supabase.table("usage")
-                .insert({
-                    "user_id": user_id,
-                    "month": month,
-                    "invoice_count": 1
-                })
+                .insert({"user_id": user_id, "month": month, "invoice_count": 1})
                 .execute()
             )
 
