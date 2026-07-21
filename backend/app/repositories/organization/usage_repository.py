@@ -16,7 +16,7 @@ No FastAPI.
 ============================================================
 """
 
-from datetime import date
+from datetime import date, UTC
 from typing import Any
 
 from app.repositories.base import BaseRepository

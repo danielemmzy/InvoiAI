@@ -17,7 +17,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.core.enums import (
+from backend.app.core.enum.enums import (
     IntegrationProvider,
     IntegrationStatus,
 )

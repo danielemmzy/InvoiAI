@@ -18,7 +18,7 @@ Never hardcode plan limits anywhere else.
 from dataclasses import dataclass
 from typing import Final
 
-from app.core.enums import PlanType
+from backend.app.core.enum.enums import PlanType
 from app.core.features import Feature
 
 

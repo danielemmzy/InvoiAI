@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from app.core.enums import JobStatus, JobType
+from backend.app.core.enum.enums import JobStatus, JobType
 
 
 # ============================================================

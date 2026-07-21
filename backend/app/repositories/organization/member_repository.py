@@ -1,56 +1,69 @@
 """
 ============================================================
-Organization Member Repository
+Member Repository
 
-Handles ONLY organization membership persistence.
+Persistence layer for organization memberships.
 
-Responsibilities:
-- Organization memberships
-- User roles
-- Invitations
-- Membership lookup
+Owns the org_members table.
+
+Responsibilities
+----------------
+- Membership CRUD
+- Organization member lookups
+- Invitation persistence
+- Member activation/deactivation
 
 No business logic.
 No authorization.
-No FastAPI.
 ============================================================
 """
 
+from datetime import UTC, datetime
 from typing import Any
 
+from backend.app.core.enum.enums import OrgRole
 from app.repositories.base import BaseRepository
 
 
 class MemberRepository(BaseRepository):
+    """
+    Repository for organization memberships.
+    """
 
     TABLE = "org_members"
 
-    # ---------------------------------------------------------
-    # Create Membership
-    # ---------------------------------------------------------
+    def table(self):
+        return self.db.table(self.TABLE)
 
-    async def create(self, values: dict[str, Any]) -> dict:
+    # =========================================================
+    # Creation
+    # =========================================================
+
+    async def create_membership(
+        self,
+        values: dict[str, Any],
+    ) -> dict:
 
         result = (
-            self.db.table(self.TABLE)
+            self.table()
             .insert(values)
             .execute()
         )
 
         return result.data[0]
+    
+        # =========================================================
+    # Retrieval
+    # =========================================================
 
-    # ---------------------------------------------------------
-    # Get Membership
-    # ---------------------------------------------------------
-
-    async def get(
+    async def get_membership(
         self,
         org_id: str,
         user_id: str,
     ) -> dict | None:
 
         result = (
-            self.db.table(self.TABLE)
+            self.table()
             .select("*")
             .eq("org_id", org_id)
             .eq("user_id", user_id)
@@ -58,137 +71,177 @@ class MemberRepository(BaseRepository):
             .execute()
         )
 
-        if not result.data:
-            return None
+        return result.data[0] if result.data else None
 
-        return result.data[0]
-
-    # ---------------------------------------------------------
-    # Get User Organizations
-    # ---------------------------------------------------------
-
-    async def get_user_memberships(
+    async def get_by_invite_token(
         self,
-        user_id: str,
-    ) -> list[dict]:
+        token: str,
+    ) -> dict | None:
 
         result = (
-            self.db.table(self.TABLE)
+            self.table()
             .select("*")
-            .eq("user_id", user_id)
-            .eq("is_active", True)
+            .eq("invite_token", token)
+            .limit(1)
             .execute()
         )
 
-        return result.data
+        return result.data[0] if result.data else None
 
-    # ---------------------------------------------------------
-    # Get Organization Members
-    # ---------------------------------------------------------
-
-    async def get_org_members(
+    async def list_organization_members(
         self,
         org_id: str,
     ) -> list[dict]:
 
         result = (
-            self.db.table(self.TABLE)
+            self.table()
+            .select("*")
+            .eq("org_id", org_id)
+            .order("created_at")
+            .execute()
+        )
+
+        return result.data or []
+
+    async def list_user_memberships(
+        self,
+        user_id: str,
+    ) -> list[dict]:
+
+        result = (
+            self.table()
+            .select("*")
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        return result.data or []
+
+    async def list_role_members(
+        self,
+        org_id: str,
+        role: OrgRole,
+    ) -> list[dict]:
+
+        result = (
+            self.table()
+            .select("*")
+            .eq("org_id", org_id)
+            .eq("role", role.value)
+            .execute()
+        )
+
+        return result.data or []
+
+    async def list_active_members(
+        self,
+        org_id: str,
+    ) -> list[dict]:
+
+        result = (
+            self.table()
             .select("*")
             .eq("org_id", org_id)
             .eq("is_active", True)
             .execute()
         )
 
-        return result.data
+        return result.data or []
+    
+        # =========================================================
+    # Invitations
+    # =========================================================
 
-    # ---------------------------------------------------------
-    # Update Membership
-    # ---------------------------------------------------------
-
-    async def update(
+    async def store_invitation(
         self,
-        member_id: str,
-        values: dict[str, Any],
+        membership_id: str,
+        invite_email: str,
+        invite_token: str,
+        expires_at: datetime,
     ) -> dict:
+        """
+        Store invitation information for a membership.
+        """
 
-        result = (
-            self.db.table(self.TABLE)
-            .update(values)
-            .eq("id", member_id)
-            .execute()
+        return await self.update_membership(
+            membership_id,
+            {
+                "invite_email": invite_email,
+                "invite_token": invite_token,
+                "invite_expires_at": expires_at,
+            },
         )
 
-        return result.data[0]
-
-    # ---------------------------------------------------------
-    # Deactivate Membership
-    # ---------------------------------------------------------
-
-    async def deactivate(
+    async def clear_invitation(
         self,
-        member_id: str,
-    ) -> None:
+        membership_id: str,
+    ) -> dict:
+        """
+        Clear invitation data after acceptance or cancellation.
+        """
 
-        (
-            self.db.table(self.TABLE)
-            .update(
-                {
-                    "is_active": False,
-                }
-            )
-            .eq("id", member_id)
-            .execute()
+        return await self.update_membership(
+            membership_id,
+            {
+                "invite_email": None,
+                "invite_token": None,
+                "invite_expires_at": None,
+            },
         )
 
-    # ---------------------------------------------------------
-    # Delete Membership
-    # ---------------------------------------------------------
-
-    async def delete(
+    async def mark_invitation_accepted(
         self,
-        member_id: str,
-    ) -> None:
+        membership_id: str,
+    ) -> dict:
+        """
+        Mark an invitation as accepted.
+        """
 
-        (
-            self.db.table(self.TABLE)
-            .delete()
-            .eq("id", member_id)
-            .execute()
+        return await self.update_membership(
+            membership_id,
+            {
+                "joined_at": datetime.now(UTC),
+                "is_active": True,
+                "invite_token": None,
+                "invite_email": None,
+                "invite_expires_at": None,
+            },
         )
+    
+        # =========================================================
+    # Helpers
+    # =========================================================
 
-    # ---------------------------------------------------------
-    # Exists
-    # ---------------------------------------------------------
-
-    async def exists(
+    async def membership_exists(
         self,
         org_id: str,
         user_id: str,
     ) -> bool:
+        """
+        Check whether a user belongs to an organization.
+        """
 
         result = (
-            self.db.table(self.TABLE)
+            self.table()
             .select("id")
             .eq("org_id", org_id)
             .eq("user_id", user_id)
-            .eq("is_active", True)
             .limit(1)
             .execute()
         )
 
         return bool(result.data)
 
-    # ---------------------------------------------------------
-    # Count Members
-    # ---------------------------------------------------------
-
-    async def count(
+    async def count_active_members(
         self,
         org_id: str,
     ) -> int:
+        """
+        Count active organization members.
+        """
 
         result = (
-            self.db.table(self.TABLE)
+            self.table()
             .select(
                 "id",
                 count="exact",
@@ -199,3 +252,44 @@ class MemberRepository(BaseRepository):
         )
 
         return result.count or 0
+
+    async def count_members(
+        self,
+        org_id: str,
+    ) -> int:
+        """
+        Count all organization members.
+        """
+
+        result = (
+            self.table()
+            .select(
+                "id",
+                count="exact",
+            )
+            .eq("org_id", org_id)
+            .execute()
+        )
+
+        return result.count or 0
+
+    async def role_exists(
+        self,
+        org_id: str,
+        role: OrgRole,
+    ) -> bool:
+        """
+        Check whether an organization has at least one member
+        with the specified role.
+        """
+
+        result = (
+            self.table()
+            .select("id")
+            .eq("org_id", org_id)
+            .eq("role", role.value)
+            .limit(1)
+            .execute()
+        )
+
+        return bool(result.data)

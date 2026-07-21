@@ -9,12 +9,6 @@ Responsibilities
 ✓ Validate JWT
 ✓ Return authenticated user
 
-Does NOT
-
-✗ Resolve organizations
-✗ Check permissions
-✗ Load plans
-✗ Load features
 ============================================================
 """
 

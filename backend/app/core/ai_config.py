@@ -20,7 +20,7 @@ Never hardcode AI values elsewhere.
 from dataclasses import dataclass
 from typing import Final
 
-from app.core.enums import AIProvider
+from backend.app.core.enum.enums import AIProvider
 
 
 # ============================================================

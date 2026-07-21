@@ -184,6 +184,7 @@ class ApprovalStatus(StrEnum):
 
 
 class ApprovalDecision(StrEnum):
+    PENDING = "pending"
     APPROVE = "approve"
     REJECT = "reject"
     ESCALATE = "escalate"
@@ -213,3 +214,6 @@ class AuditAction(StrEnum):
     LOGIN = "login"
     LOGOUT = "logout"
     EXPORT = "export"
+
+
+

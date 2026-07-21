@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request
 from app.core.supabase import get_supabase
 from app.core.auth import get_current_user, AuthUser
 from app.core.limiter import limiter
-from app.models.auth import SignUpRequest, LoginRequest, RefreshRequest, AuthResponse, UserProfile
+from backend.app.models.schemas.auth import SignUpRequest, LoginRequest, RefreshRequest, AuthResponse, UserProfile
 from app.services.usage import get_usage_summary
 
 logger = logging.getLogger(__name__)
