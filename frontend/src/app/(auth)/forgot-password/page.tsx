@@ -1,0 +1,12 @@
+"use client";
+import Link from "next/link";
+import { useState } from "react";
+import { ArrowLeft, Mail, Loader2, ShieldCheck } from "lucide-react";
+import { authApi } from "@/api/auth";
+import { getErrorMessage } from "@/api/client";
+
+export default function ForgotPasswordPage(){
+ const [email,setEmail]=useState(""); const [busy,setBusy]=useState(false); const [sent,setSent]=useState(false); const [error,setError]=useState("");
+ async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);setError("");try{await authApi.forgotPassword(email);setSent(true)}catch(err){setError(getErrorMessage(err,"We couldn't send the reset email."))}finally{setBusy(false)}}
+ return <div className="auth-shell"><div className="auth-art"><div className="auth-panel-brand">Invoi<span>AI</span></div><div className="ledger"><ShieldCheck size={20} color="#B98532"/><h2 style={{fontFamily:"var(--display)",fontSize:30,margin:"16px 0 8px"}}>Your account stays yours.</h2><p style={{color:"#aaa",lineHeight:1.7,fontSize:14}}>Password recovery is handled through a short-lived verified link.</p></div><small style={{color:"#777"}}>Secure account recovery</small></div><main className="auth-form-wrap"><section className="auth-form"><Link href="/login" className="auth-subtitle" style={{display:"inline-flex",gap:7,alignItems:"center"}}><ArrowLeft size={14}/> Back to sign in</Link><h1 className="auth-title">Forgot your password?</h1><p className="auth-subtitle">Enter your email and we'll send a secure reset link.</p>{sent?<div className="soft-notice"><Mail size={18}/><div><strong>Check your inbox</strong><p>If an account exists for that address, a reset link is on its way.</p></div></div>:<form onSubmit={submit}><div className="auth-field"><label htmlFor="email">Email address</label><input id="email" type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} required/></div>{error&&<div className="form-error">{error}</div>}<button className="auth-submit" disabled={busy}>{busy?<><Loader2 size={16} className="animate-spin"/>Sending secure link…</>:"Send reset link"}</button></form>}<p className="auth-foot">Remembered it? <Link href="/login">Sign in</Link></p></section></main></div>
+}

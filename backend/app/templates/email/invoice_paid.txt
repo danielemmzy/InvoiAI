@@ -1,0 +1,13 @@
+Invoice Paid
+
+Hello {{ customer_name }}
+
+Invoice {{ invoice_number }} has been paid.
+
+Amount:
+
+{{ amount }}
+
+Thank you.
+
+InvoiAI

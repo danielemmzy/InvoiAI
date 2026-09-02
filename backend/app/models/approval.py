@@ -19,16 +19,16 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from backend.app.core.enum.enums import (
+from app.core.enum.database import (
     ApprovalDecision,
     ApprovalStatus,
     OrgRole,
 )
 
-
 # ============================================================
 # Workflow
 # ============================================================
+
 
 class ApprovalWorkflowCreate(BaseModel):
     """
@@ -85,6 +85,7 @@ class ApprovalWorkflow(BaseModel):
 # Workflow Step
 # ============================================================
 
+
 class ApprovalStepCreate(BaseModel):
     """
     One approval stage.
@@ -135,6 +136,7 @@ class ApprovalStep(BaseModel):
 # Approval Decision
 # ============================================================
 
+
 class ApprovalDecisionRequest(BaseModel):
     """
     Approve / Reject / Escalate.
@@ -151,6 +153,7 @@ class ApprovalDecisionRequest(BaseModel):
 # ============================================================
 # Approval History
 # ============================================================
+
 
 class ApprovalHistory(BaseModel):
 
@@ -178,6 +181,7 @@ class ApprovalHistory(BaseModel):
 # ============================================================
 # Approval Summary
 # ============================================================
+
 
 class ApprovalSummary(BaseModel):
     """

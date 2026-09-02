@@ -17,15 +17,15 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from backend.app.core.enum.enums import (
+from app.core.enum.database import (
     IntegrationProvider,
     IntegrationStatus,
 )
 
-
 # ============================================================
 # Integration Connection
 # ============================================================
+
 
 class IntegrationConnectionCreate(BaseModel):
     """
@@ -77,6 +77,7 @@ class IntegrationConnection(BaseModel):
 # Synchronization
 # ============================================================
 
+
 class IntegrationSync(BaseModel):
 
     id: str
@@ -104,6 +105,7 @@ class IntegrationSync(BaseModel):
 # Webhooks
 # ============================================================
 
+
 class IntegrationWebhook(BaseModel):
 
     id: str
@@ -125,6 +127,7 @@ class IntegrationWebhook(BaseModel):
 # Connection Summary
 # ============================================================
 
+
 class IntegrationSummary(BaseModel):
 
     id: str
@@ -141,6 +144,7 @@ class IntegrationSummary(BaseModel):
 # ============================================================
 # Integration Page
 # ============================================================
+
 
 class IntegrationPage(BaseModel):
 

@@ -17,7 +17,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from backend.app.core.enum.enums import RiskLevel
+from app.core.enum.database import RiskLevel
 from app.models.domain.base import TimestampedEntity
 
 

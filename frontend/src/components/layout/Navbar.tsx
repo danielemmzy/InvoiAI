@@ -3,12 +3,17 @@
 
 import Link from "next/link";
 import { useAppStore } from "@/store/useAppStore";
+import { useState } from "react";
+import { Menu } from "lucide-react";
+import MobileMenu from "@/components/marketing/MobileMenu";
 import { Zap } from "lucide-react";
 
 export default function Navbar() {
   const { isAuthenticated } = useAppStore();
+  const [open, setOpen] = useState(false);
 
-  return (
+  return (<>
+    <MobileMenu open={open} onClose={() => setOpen(false)} links={[{href:"#flow",label:"How it works"},{href:"/docs",label:"Docs"},{href:"#features",label:"Features"}]} ctaHref={isAuthenticated?"/dashboard":"/signup"} ctaLabel={isAuthenticated?"Open dashboard":"Start free"} secondaryHref="/login" secondaryLabel="Sign in" />
     <nav
       className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-12 h-16"
       style={{
@@ -39,7 +44,7 @@ export default function Navbar() {
       </Link>
 
       {/* Nav links */}
-      <div className="flex items-center gap-8">
+      <div className="flex items-center gap-8 nav-desktop">
         {["Pricing", "Industries", "Docs"].map((l) => (
           <span
             key={l}
@@ -85,6 +90,7 @@ export default function Navbar() {
           </div>
         )}
       </div>
+      <button className="nav-mobile-trigger" aria-label="Open navigation" onClick={() => setOpen(true)}><Menu size={20}/></button>
     </nav>
-  );
+  </>);
 }

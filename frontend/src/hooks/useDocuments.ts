@@ -3,14 +3,17 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import toast from "react-hot-toast";
 import { documentsApi, exportApi } from "@/api/documents";
+import { useAppStore } from "@/store/useAppStore";
 
 export function useDocuments(industryFilter?: string) {
   const [offset, setOffset] = useState(0);
   const limit = 20;
+  const ws = useAppStore((s) => s.activeWorkspace?.id);
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["documents", offset, industryFilter],
+    queryKey: ["documents", ws, offset, industryFilter],
     queryFn: () => documentsApi.getHistory(offset, limit, industryFilter),
+    enabled: !!ws,
     staleTime: 30 * 1000,
   });
 
@@ -30,20 +33,22 @@ export function useDocuments(industryFilter?: string) {
 }
 
 export function useDocument(invoiceId: string | null) {
+  const ws = useAppStore((s) => s.activeWorkspace?.id);
   return useQuery({
-    queryKey: ["document", invoiceId],
+    queryKey: ["document", ws, invoiceId],
     queryFn: () => documentsApi.getById(invoiceId!),
-    enabled: !!invoiceId,
+    enabled: !!ws && !!invoiceId,
     staleTime: 5 * 60 * 1000,
   });
 }
 
 export function useDeleteDocument() {
   const queryClient = useQueryClient();
+  const ws = useAppStore((s) => s.activeWorkspace?.id);
   return useMutation({
     mutationFn: (invoiceId: string) => documentsApi.delete(invoiceId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      queryClient.invalidateQueries({ queryKey: ["documents", ws] });
       toast.success("Document deleted.");
     },
     onError: () => toast.error("Failed to delete document."),
@@ -61,6 +66,7 @@ export function useIndustries() {
 
 export function useExport() {
   const queryClient = useQueryClient();
+  const ws = useAppStore((s) => s.activeWorkspace?.id);
 
   const excelMutation = useMutation({
     mutationFn: (id: string) => exportApi.downloadExcel(id),
@@ -79,7 +85,7 @@ export function useExport() {
     onSuccess: (data) => {
       toast.success("Opening Google Sheets...");
       window.open(data.sheets_url, "_blank");
-      queryClient.invalidateQueries({ queryKey: ["documents"] });
+      queryClient.invalidateQueries({ queryKey: ["documents", ws] });
     },
     onError: (error: unknown) => {
       const msg = getErrorMessage(error) || "Sheets export failed.";

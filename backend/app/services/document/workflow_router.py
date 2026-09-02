@@ -1,0 +1,2 @@
+ROUTES={"invoice":"accounts_payable","receipt":"business_expense","purchase_order":"procurement","bank_statement":"personal_finance","quotation":"procurement_quote","contract":"contract_review","credit_note":"ap_credit_note","debit_note":"ap_debit_note","delivery_note":"goods_receipt","expense_report":"business_expense","payslip":"personal_income","tax_document":"tax_review","financial_statement":"financial_review","csv_export":"data_import","spreadsheet":"data_import"}
+def route_for(document_type:str)->str:return ROUTES.get(document_type,"general_review")

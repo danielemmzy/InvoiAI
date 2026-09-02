@@ -45,7 +45,8 @@ class Settings(BaseSettings):
     # ========================================================
 
     app_name: str = "InvoiAI"
-    app_version: str = "2.0.0"
+    app_version: str = "2.2.0"
+    frontend_app_url: str = "http://localhost:3000"
 
     environment: str = "development"
     debug: bool = False
@@ -90,6 +91,10 @@ class Settings(BaseSettings):
     stripe_price_free: str = ""
     stripe_price_starter: str = ""
     stripe_price_pro: str = ""
+    stripe_price_business: str = ""
+    stripe_price_starter_annual: str = ""
+    stripe_price_pro_annual: str = ""
+    stripe_price_business_annual: str = ""
     stripe_price_enterprise: str = ""
 
     # ========================================================
@@ -99,7 +104,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = (
-        "http://localhost:8000/api/v1/integrations/google/callback"
+        "http://localhost:8000/api/v2/integrations/google/callback"
     )
 
     # ========================================================
@@ -109,7 +114,7 @@ class Settings(BaseSettings):
     quickbooks_client_id: str = ""
     quickbooks_client_secret: str = ""
     quickbooks_redirect_uri: str = (
-        "http://localhost:8000/api/v1/integrations/quickbooks/callback"
+        "http://localhost:8000/api/v2/integrations/quickbooks/callback"
     )
 
     quickbooks_environment: str = "sandbox"
@@ -121,7 +126,7 @@ class Settings(BaseSettings):
     xero_client_id: str = ""
     xero_client_secret: str = ""
     xero_redirect_uri: str = (
-        "http://localhost:8000/api/v1/integrations/xero/callback"
+        "http://localhost:8000/api/v2/integrations/xero/callback"
     )
 
     # ========================================================
@@ -131,6 +136,14 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     redis_max_connections: int = 100
+
+    # Distributed scheduler locking. Required in production so multiple
+    # application workers cannot execute the same cron job concurrently.
+    scheduler_lock_enabled: bool = True
+    scheduler_lock_ttl_seconds: int = 300
+    # Fail closed in production when Redis is unavailable. Development may
+    # opt into fail-open behaviour for local work without Redis.
+    scheduler_lock_fail_open: bool = False
 
     # ========================================================
     # Background Workers
@@ -146,6 +159,8 @@ class Settings(BaseSettings):
     # ========================================================
     # Email
     # ========================================================
+    ap_email_webhook_secret: str = ""
+    ap_email_inbound_domain: str = "inbound.invoiai.com"
 
     smtp_host: str = ""
     smtp_port: int = 587
@@ -161,6 +176,16 @@ class Settings(BaseSettings):
     # ========================================================
 
     storage_bucket: str = "documents"
+
+    # Accepted document MIME types for the V2 intake endpoint.
+    allowed_file_types: set[str] = {
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+    }
+
+    max_file_size_mb: int = 10
 
     # ========================================================
     # Logging
@@ -178,6 +203,9 @@ class Settings(BaseSettings):
 
     password_reset_expire_minutes: int = 30
 
+    # AES-256-GCM key for OAuth tokens. Base64url-encoded 32 bytes.
+    token_encryption_key: str = ""
+
     # ========================================================
     # Feature Toggles
     # ========================================================
@@ -190,6 +218,26 @@ class Settings(BaseSettings):
     # ========================================================
 
     sentry_dsn: str = ""
+
+    # ========================================================
+    # Google Service Account
+    # ========================================================
+
+    google_project_id: str = ""
+
+    google_private_key_id: str = ""
+
+    google_private_key: str = ""
+
+    google_service_account_email: str = ""
+
+    # ========================================================
+    # Google Document AI
+    # ========================================================
+
+    google_location: str = ""
+
+    google_processor_id: str = ""
 
 
 @lru_cache

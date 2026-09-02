@@ -6,7 +6,7 @@
 export interface User {
   user_id: string;
   email: string;
-  plan: "free" | "starter" | "pro";
+  plan: "free" | "starter" | "pro" | "business" | "enterprise";
   usage: UsageSummary;
 }
 
@@ -19,13 +19,7 @@ export interface UsageSummary {
   limit_reached: boolean;
 }
 
-export interface AuthResponse {
-  access_token: string;
-  refresh_token: string;
-  user_id: string;
-  email: string;
-  plan: string;
-}
+
 
 export interface StructuredDocument {
   industry: string;
@@ -41,6 +35,11 @@ export interface UploadResponse {
   document_type?: string;
   structured_data?: StructuredDocument;
   validation_warnings: string[];
+  file_name?: string;
+  industry?: string;
+  pipeline_stage?: string;
+  error_message?: string | null;
+  created_at?: string;
 }
 
 export interface HistoryItem {
@@ -85,7 +84,22 @@ export interface CheckoutResponse {
   session_id: string;
 }
 
+export interface AuthResponse {
+  user_id: string;
+  email: string;
+  org_id?: string | null;
+  plan?: string | null;
+}
+
+export interface SignupResponse {
+  user_id?: string;
+  email?: string;
+  plan?: string;
+  requires_email_verification?: boolean;
+}
+
 export interface SheetsExportResponse {
   sheets_url: string;
   message: string;
 }
+export * from "./workspace";

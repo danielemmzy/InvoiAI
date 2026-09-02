@@ -1,7 +1,5 @@
 """
 ============================================================
-app/repositories/organization/usage_repository.py
-
 Organization Usage Repository
 
 Responsibilities:
@@ -16,134 +14,161 @@ No FastAPI.
 ============================================================
 """
 
-from datetime import date, UTC
-from typing import Any
+from __future__ import annotations
 
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from uuid import UUID
+
+from app.mappers.organization_mapper import OrganizationUsageMapper
+from app.models.domain.organization import OrganizationUsage
 from app.repositories.base import BaseRepository
 
 
 class UsageRepository(BaseRepository):
+    """
+    Repository for public.organization_usage.
+    """
 
-    TABLE = "organization_usage"
+    table_name = "organization_usage"
+    mapper = OrganizationUsageMapper
 
-    # ---------------------------------------------------------
-    # Get Current Month Usage
-    # ---------------------------------------------------------
+    # =========================================================
+    # CRUD
+    # =========================================================
+
+    async def create_usage(
+        self,
+        usage: OrganizationUsage | dict,
+    ) -> OrganizationUsage | None:
+        return await self.create(usage)
+
+    async def get_usage(
+        self,
+        usage_id: UUID,
+    ) -> OrganizationUsage | None:
+        return await self.get(usage_id)
+
+    async def update_usage(
+        self,
+        usage_id: UUID,
+        data,
+    ) -> OrganizationUsage | None:
+        return await self.update(
+            usage_id,
+            data,
+        )
+
+    async def delete_usage(
+        self,
+        usage_id: UUID,
+    ) -> bool:
+        return await self.delete(usage_id)
+
+    # =========================================================
+    # Current Usage
+    # =========================================================
 
     async def get_current_usage(
         self,
-        org_id: str,
-        month: str,
-    ) -> dict | None:
-
-        result = (
-            self.db.table(self.TABLE)
+        org_id: UUID,
+        month: date,
+    ) -> OrganizationUsage | None:
+        response = (
+            self.table()
             .select("*")
-            .eq("org_id", org_id)
-            .eq("month", month)
+            .eq("org_id", str(org_id))
+            .eq("month", month.isoformat())
             .limit(1)
             .execute()
         )
 
-        if not result.data:
-            return None
+        return self._one(response)
 
-        return result.data[0]
-
-    # ---------------------------------------------------------
-    # Create Monthly Usage
-    # ---------------------------------------------------------
-
-    async def create_month(
+    async def usage_exists(
         self,
-        values: dict[str, Any],
-    ) -> dict:
-
-        result = (
-            self.db.table(self.TABLE)
-            .insert(values)
+        org_id: UUID,
+        month: date,
+    ) -> bool:
+        response = (
+            self.table()
+            .select("id")
+            .eq("org_id", str(org_id))
+            .eq("month", month.isoformat())
+            .limit(1)
             .execute()
         )
 
-        return result.data[0]
+        return bool(response.data)
 
-    # ---------------------------------------------------------
-    # Update Usage Record
-    # ---------------------------------------------------------
+    # =========================================================
+    # Usage History
+    # =========================================================
 
-    async def update_usage(
+    async def list_org_usage(
         self,
-        org_id: str,
-        month: str,
-        values: dict[str, Any],
-    ) -> dict:
-
-        result = (
-            self.db.table(self.TABLE)
-            .update(values)
-            .eq("org_id", org_id)
-            .eq("month", month)
+        org_id: UUID,
+    ) -> list[OrganizationUsage]:
+        response = (
+            self.table()
+            .select("*")
+            .eq("org_id", str(org_id))
+            .order("month", desc=True)
             .execute()
         )
 
-        return result.data[0]
+        return self._many(response)
 
-    # ---------------------------------------------------------
-    # Update Usage Metrics (Atomic)
-    # ---------------------------------------------------------
+    # =========================================================
+    # Usage Metrics
+    # =========================================================
 
     async def update_usage_metrics(
         self,
         *,
-        org_id: str,
-        month: str,
-        user_id: str | None = None,
+        org_id: UUID,
+        month: date,
+        user_id: UUID | None = None,
         document_increment: int = 0,
         storage_increment: int = 0,
         ai_tokens_increment: int = 0,
         api_calls_increment: int = 0,
-        ai_cost_increment: float = 0,
+        ai_cost_increment: Decimal = Decimal("0"),
     ) -> None:
-        """
-        Atomically updates organization usage.
-        """
+        self.db.rpc(
+            "usage_update_metrics",
+            {
+                "p_org_id": str(org_id),
+                "p_month": month.isoformat(),
+                "p_document_increment": document_increment,
+                "p_storage_increment": storage_increment,
+                "p_ai_tokens_increment": ai_tokens_increment,
+                "p_api_calls_increment": api_calls_increment,
+                "p_ai_cost_increment": str(ai_cost_increment),
+                "p_user_id": str(user_id) if user_id else None,
+            },
+        ).execute()
 
-        await self.db.rpc(
-        "usage_update_metrics",
-        {
-            "p_org_id": org_id,
-            "p_month": month,
-            "p_document_increment": document_increment,
-            "p_storage_increment": storage_increment,
-            "p_ai_tokens_increment": ai_tokens_increment,
-            "p_api_calls_increment": api_calls_increment,
-            "p_ai_cost_increment": ai_cost_increment,
-            "p_user_id": user_id,
-        },
-    ).execute()
-
-    # ---------------------------------------------------------
-    # Delete Month
-    # ---------------------------------------------------------
-
-    async def delete_month(
-        self,
-        org_id: str,
-        month: str,
-    ) -> None:
-
-        (
-            self.db.table(self.TABLE)
-            .delete()
-            .eq("org_id", org_id)
-            .eq("month", month)
-            .execute()
-        )
-
-    # ---------------------------------------------------------
-    # Helper
-    # ---------------------------------------------------------
+    # =========================================================
+    # Month
+    # =========================================================
 
     @staticmethod
-    def current_month() -> str:
-        return date.today().strftime("%Y-%m")
+    def current_month() -> date:
+        """
+        Return the first day of the current UTC month.
+
+        Example:
+            2026-08-21 -> date(2026, 8, 1)
+
+        This matches PostgreSQL:
+            organization_usage.month DATE
+        """
+
+        now = datetime.now(UTC)
+
+        return date(
+            now.year,
+            now.month,
+            1,
+        )

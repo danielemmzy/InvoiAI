@@ -16,12 +16,12 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from backend.app.core.enum.enums import ChatRole
-
+from app.core.enum.database import ChatRole
 
 # ============================================================
 # Chat Session
 # ============================================================
+
 
 class ChatSessionCreate(BaseModel):
     """
@@ -65,6 +65,7 @@ class ChatSession(BaseModel):
 # Chat Message
 # ============================================================
 
+
 class ChatMessageCreate(BaseModel):
 
     message: str = Field(
@@ -96,6 +97,7 @@ class ChatMessage(BaseModel):
 # Tool Calls
 # ============================================================
 
+
 class ToolCall(BaseModel):
 
     id: str
@@ -119,6 +121,7 @@ class ToolCall(BaseModel):
 # Citations
 # ============================================================
 
+
 class ChatCitation(BaseModel):
 
     document_id: str
@@ -133,6 +136,7 @@ class ChatCitation(BaseModel):
 # ============================================================
 # AI Response
 # ============================================================
+
 
 class ChatResponse(BaseModel):
 
@@ -151,6 +155,7 @@ class ChatResponse(BaseModel):
 # Chat Summary
 # ============================================================
 
+
 class ChatSummary(BaseModel):
 
     id: str
@@ -167,6 +172,7 @@ class ChatSummary(BaseModel):
 # ============================================================
 # Chat Page
 # ============================================================
+
 
 class ChatPage(BaseModel):
 

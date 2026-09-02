@@ -17,12 +17,12 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from backend.app.core.enum.enums import AuditAction
-
+from app.core.enum.database import AuditAction
 
 # ============================================================
 # Audit Entry
 # ============================================================
+
 
 class AuditEntry(BaseModel):
     """
@@ -74,6 +74,7 @@ class AuditEntry(BaseModel):
 # Audit Summary
 # ============================================================
 
+
 class AuditSummary(BaseModel):
 
     id: str
@@ -93,6 +94,7 @@ class AuditSummary(BaseModel):
 # Audit Page
 # ============================================================
 
+
 class AuditPage(BaseModel):
 
     logs: list[AuditSummary]
@@ -107,6 +109,7 @@ class AuditPage(BaseModel):
 # ============================================================
 # Audit Filters
 # ============================================================
+
 
 class AuditFilter(BaseModel):
 
@@ -124,6 +127,7 @@ class AuditFilter(BaseModel):
 # ============================================================
 # AI Audit
 # ============================================================
+
 
 class AIAudit(BaseModel):
     """

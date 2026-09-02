@@ -7,17 +7,18 @@ These models mirror the PostgreSQL tables:
 - organizations
 - organization_settings
 - org_members
+- organization_usage
 ============================================================
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from pydantic import Field
 
-from backend.app.core.enum.enums import OrgRole, PlanType
+from app.core.enum.database import OrgRole, PlanType
 from app.models.domain.base import TimestampedEntity
 
 
@@ -36,6 +37,7 @@ class Organization(TimestampedEntity):
     name: str
     slug: str
     plan: PlanType
+    ai_summary: str | None = None
     industry: str | None = None
     company_size: str | None = None
     country: str | None = None
@@ -122,3 +124,34 @@ class OrganizationMember(TimestampedEntity):
     deactivated_at: datetime | None = None
     deactivated_by: UUID | None = None
     joined_at: datetime | None = None
+
+
+# ============================================================
+# Organization Usage
+# ============================================================
+
+class OrganizationUsage(TimestampedEntity):
+    """
+    Mirrors the public.organization_usage table.
+
+    PostgreSQL:
+        month DATE NOT NULL
+
+    The application therefore uses datetime.date rather than str.
+    """
+
+    org_id: UUID
+
+    month: date
+
+    documents_processed: int
+
+    storage_used_bytes: int
+
+    ai_tokens_used: int
+
+    api_calls: int
+
+    ai_cost_usd: Decimal
+
+    created_by: UUID | None = None

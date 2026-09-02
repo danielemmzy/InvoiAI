@@ -20,6 +20,8 @@ VIEW_VENDORS = "vendors:view"
 MANAGE_VENDORS = "vendors:manage"
 
 VIEW_ANALYTICS = "analytics:view"
+VIEW_INSIGHTS = "insights:view"
+MANAGE_INSIGHTS = "insights:manage"
 
 VIEW_AI = "ai:view"
 RUN_AI = "ai:run"
@@ -42,6 +44,9 @@ VIEW_AUDIT_LOGS = "audit:view"
 VIEW_BILLING = "billing:view"
 MANAGE_BILLING = "billing:manage"
 
+VIEW_FINANCE = "finance:view"
+MANAGE_FINANCE = "finance:manage"
+
 
 # ============================================================
 # Role Permission Mapping
@@ -50,6 +55,8 @@ MANAGE_BILLING = "billing:manage"
 ROLE_PERMISSIONS = {
 
     "owner": {
+        VIEW_INSIGHTS,
+        MANAGE_INSIGHTS,
 
         VIEW_DOCUMENTS,
         UPLOAD_DOCUMENTS,
@@ -81,9 +88,13 @@ ROLE_PERMISSIONS = {
 
         VIEW_BILLING,
         MANAGE_BILLING,
+        VIEW_FINANCE,
+        MANAGE_FINANCE,
     },
 
     "admin": {
+        VIEW_INSIGHTS,
+        MANAGE_INSIGHTS,
 
         VIEW_DOCUMENTS,
         UPLOAD_DOCUMENTS,
@@ -113,9 +124,12 @@ ROLE_PERMISSIONS = {
         VIEW_AUDIT_LOGS,
 
         VIEW_BILLING,
+        VIEW_FINANCE,
+        MANAGE_FINANCE,
     },
 
     "member": {
+        VIEW_INSIGHTS,
 
         VIEW_DOCUMENTS,
         UPLOAD_DOCUMENTS,
@@ -129,9 +143,12 @@ ROLE_PERMISSIONS = {
         RUN_AI,
 
         VIEW_APPROVALS,
+        VIEW_FINANCE,
+        MANAGE_FINANCE,
     },
 
     "approver": {
+        VIEW_INSIGHTS,
 
         VIEW_DOCUMENTS,
 
@@ -139,15 +156,18 @@ ROLE_PERMISSIONS = {
 
         VIEW_APPROVALS,
         APPROVE_DOCUMENTS,
+        VIEW_FINANCE,
     },
 
     "viewer": {
+        VIEW_INSIGHTS,
 
         VIEW_DOCUMENTS,
 
         VIEW_ANALYTICS,
 
         VIEW_AI,
+        VIEW_FINANCE,
     },
 }
 

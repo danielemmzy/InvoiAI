@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -6,20 +8,39 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from app.core.config import settings
 from app.core.limiter import limiter
-from app.routers import upload, invoice, history, export, industries, auth, billing, stripe_webhook
+from app.routers import (
+    documents, approvals, members, integration_webhooks, integrations,
+    copilot, finance, insights, organizations, vendors,
+    auth_v2, billing_v2, export_v2, industries_v2, ap, goods_receipts, ap_email, workspaces,
+    purchase_orders,
+)
 
 from app.core.logging import configure_logging
 from app.middleware.request_logging import RequestLoggingMiddleware
 from app.middleware.exception_logging import ExceptionLoggingMiddleware
+from app.scheduler.runtime import cron_runtime
+from app.core.redis import close_redis
 from asgi_correlation_id import CorrelationIdMiddleware
  
 
 configure_logging()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await cron_runtime.start()
+    try:
+        yield
+    finally:
+        await cron_runtime.stop()
+        await close_redis()
+
+
 app = FastAPI(
     title="InvoiAI",
     description="Transform any business document into structured data instantly.",
-    version="0.2.0",
+    version="2.2.0",
+    lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -71,20 +92,41 @@ async def limit_file_size(request: Request, call_next):
         )
     return await call_next(request)
  
-# ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(upload.router)
-app.include_router(invoice.router)
-app.include_router(history.router)
-app.include_router(export.router)
-app.include_router(industries.router)
-app.include_router(auth.router)
-app.include_router(billing.router)
-app.include_router(stripe_webhook.router)
- 
+# ── Routers / API versioning ─────────────────────────────────────────────────
+# Canonical public API:
+#   V1 = frozen compatibility surface
+#   V2 = current architecture
+#
+# Root-mounted routers are retained temporarily for backward compatibility with
+# existing clients/tests. New frontend code MUST use /api/v2/*.
+# Canonical V2 public API. V1 routers have been removed from the application surface.
+V2_ROUTERS = [
+    auth_v2.router,
+    documents.router,
+    approvals.router,
+    members.router,
+    integration_webhooks.router,
+    integrations.router,
+    copilot.router,
+    finance.router,
+    insights.router,
+    organizations.router,
+    vendors.router,
+    billing_v2.router,
+    export_v2.router,
+    industries_v2.router,
+    ap.router,
+    goods_receipts.router,
+    ap_email.router,
+    workspaces.router,
+]
+for _router in V2_ROUTERS:
+    app.include_router(_router, prefix="/api/v2")
+
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 async def root():
-    return {"status": "ok", "app": settings.app_name, "version": "0.2.0"}
+    return {"status": "ok", "app": settings.app_name, "version": settings.app_version, "api": {"current": "v2"}}
  
 @app.get("/health", tags=["Health"])
 async def health():

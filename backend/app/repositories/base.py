@@ -1,32 +1,36 @@
 """
 ============================================================
-app/repositories/base_repository.py
+Base Repository
 
-Base repository for all persistence operations.
+Shared repository for all persistence operations.
 
 Responsibilities
 ----------------
-- Hold the shared Supabase client
-- Provide reusable CRUD helpers
-- Standardize pagination
-- Standardize existence checks
-- Standardize count operations
+- Own the Supabase client
+- Standardize CRUD operations
+- Convert DB rows -> Domain Models
+- Return raw projections when needed
+- Keep repositories free of business logic
 
-Repositories should NEVER contain business logic.
-Business rules belong in the service layer.
+Repositories should NEVER instantiate domain
+models directly. Always use mappers.
 ============================================================
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, TypeVar
+from uuid import UUID
 
 from supabase import Client
 
 from app.core.supabase import get_supabase
+from app.mappers.base import BaseMapper
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class BaseRepository:
@@ -36,7 +40,10 @@ class BaseRepository:
 
     table_name: str = ""
 
+    mapper: type[BaseMapper]
+
     def __init__(self) -> None:
+
         self.db: Client = get_supabase()
 
         if not self.table_name:
@@ -44,8 +51,13 @@ class BaseRepository:
                 f"{self.__class__.__name__} must define table_name."
             )
 
+        if not hasattr(self, "mapper"):
+            raise ValueError(
+                f"{self.__class__.__name__} must define mapper."
+            )
+
     # =========================================================
-    # Internal helper
+    # Helpers
     # =========================================================
 
     def table(self):
@@ -55,77 +67,139 @@ class BaseRepository:
         return self.db.table(self.table_name)
 
     # =========================================================
-    # Generic CRUD
+    # Domain Helpers
     # =========================================================
 
-    async def create(self, data: dict):
-        return (
-            self.table()
-            .insert(data)
-            .execute()
-        )
-
-    async def get(self, record_id: str):
-        return (
-            self.table()
-            .select("*")
-            .eq("id", record_id)
-            .single()
-            .execute()
-        )
-
-    async def update(
+    def _one(
         self,
-        record_id: str,
-        data: dict,
+        response: Any,
+    ) -> T | None:
+        """
+        Convert a single database row into a domain model.
+        """
+
+        data = response.data
+
+        if not data:
+            return None
+
+        if isinstance(data, list):
+            data = data[0]
+
+        return self.mapper.to_domain(data)
+
+    def _many(
+        self,
+        response: Any,
+    ) -> list[T]:
+        """
+        Convert multiple database rows into domain models.
+        """
+
+        return self.mapper.to_domain_list(
+            response.data or [],
+        )
+
+    # =========================================================
+    # Raw Helpers
+    # =========================================================
+
+    @staticmethod
+    def raw(
+        response: Any,
+    ) -> dict[str, Any]:
+        """
+        Return a single raw database row.
+        """
+
+        data = response.data
+
+        if not data:
+            return {}
+
+        if isinstance(data, list):
+            return data[0]
+
+        return data
+
+    @staticmethod
+    def raw_many(
+        response: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Return multiple raw database rows.
+        """
+
+        return response.data or []
+
+    # =========================================================
+    # CRUD
+    # =========================================================
+
+    async def create(
+        self,
+        data,
     ):
-        return (
+
+        response = (
             self.table()
-            .update(data)
-            .eq("id", record_id)
-            .execute()
-        )
-
-    async def delete(self, record_id: str):
-        return (
-            self.table()
-            .delete()
-            .eq("id", record_id)
-            .execute()
-        )
-
-    # =========================================================
-    # Common Queries
-    # =========================================================
-
-    async def exists(
-        self,
-        field: str,
-        value: Any,
-    ) -> bool:
-
-        result = (
-            self.table()
-            .select("id")
-            .eq(field, value)
-            .limit(1)
-            .execute()
-        )
-
-        return bool(result.data)
-
-    async def count(self) -> int:
-
-        result = (
-            self.table()
-            .select(
-                "id",
-                count="exact",
+            .insert(
+                self.mapper.to_insert(data)
             )
             .execute()
         )
 
-        return result.count or 0
+        return self._one(response)
+
+    async def get(
+        self,
+        record_id: UUID,
+    ):
+
+        response = (
+            self.table()
+            .select("*")
+            .eq("id", str(record_id))
+            .limit(1)
+            .execute()
+        )
+
+        return self._one(response)
+
+    async def update(
+        self,
+        record_id: UUID,
+        data,
+    ):
+
+        response = (
+            self.table()
+            .update(
+                self.mapper.to_update(data)
+            )
+            .eq("id", str(record_id))
+            .execute()
+        )
+
+        return self._one(response)
+
+    async def delete(
+        self,
+        record_id: UUID,
+    ) -> bool:
+
+        (
+            self.table()
+            .delete()
+            .eq("id", str(record_id))
+            .execute()
+        )
+
+        return True
+
+    # =========================================================
+    # Queries
+    # =========================================================
 
     async def list(
         self,
@@ -133,8 +207,9 @@ class BaseRepository:
         offset: int = 0,
         order_by: str = "created_at",
         ascending: bool = False,
-    ):
-        return (
+    ) -> list[T]:
+
+        response = (
             self.table()
             .select("*")
             .order(
@@ -148,10 +223,60 @@ class BaseRepository:
             .execute()
         )
 
+        return self._many(response)
+
+    async def exists(
+        self,
+        field: str,
+        value: Any,
+    ) -> bool:
+
+        if isinstance(value, UUID):
+            value = str(value)
+
+        response = (
+            self.table()
+            .select("id")
+            .eq(field, value)
+            .limit(1)
+            .execute()
+        )
+
+        return bool(response.data)
+
+    async def count(
+        self,
+        **filters,
+    ) -> int:
+
+        query = self.table().select(
+            "id",
+            count="exact",
+        )
+
+        for field, value in filters.items():
+
+            if isinstance(value, UUID):
+                value = str(value)
+
+            query = query.eq(
+                field,
+                value,
+            )
+
+        response = query.execute()
+
+        return response.count or 0
+
     # =========================================================
-    # Helpers
+    # Errors
     # =========================================================
 
     @staticmethod
-    def not_found(entity: str) -> ValueError:
-        return ValueError(f"{entity} not found")
+    def not_found(
+        entity: str,
+    ) -> ValueError:
+
+        return ValueError(
+            f"{entity} not found."
+        )

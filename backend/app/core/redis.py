@@ -16,7 +16,7 @@ Redis is used for:
 Redis NEVER stores permanent business data.
 PostgreSQL (Supabase) is always the source of truth.
 
-Singleton connection.
+Singleton async connection.
 ============================================================
 """
 
@@ -24,50 +24,100 @@ from __future__ import annotations
 
 import logging
 
-import redis
+from redis.asyncio import Redis
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_redis: redis.Redis | None = None
+_redis: Redis | None = None
 
 
-def get_redis() -> redis.Redis:
+# ============================================================
+# Connection
+# ============================================================
+
+
+async def get_redis() -> Redis:
     """
-    Returns a singleton Redis client.
+    Returns a singleton async Redis client.
 
-    Usage:
-        redis = get_redis()
-        redis.set("key", "value")
+    Usage
+    -----
+        redis = await get_redis()
+
+        await redis.set("key", "value")
+
+        value = await redis.get("key")
     """
 
     global _redis
 
     if _redis is None:
-        _redis = redis.Redis.from_url(
-            settings.REDIS_URL,
+
+        _redis = Redis.from_url(
+            settings.redis_url,
+            encoding="utf-8",
             decode_responses=True,
             health_check_interval=30,
             socket_timeout=5,
             socket_connect_timeout=5,
             retry_on_timeout=True,
+            max_connections=settings.redis_max_connections,
         )
 
-        _redis.ping()
+        await _redis.ping()
 
-        logger.info("Redis initialized")
+        logger.info(
+            "Redis initialized successfully."
+        )
 
     return _redis
 
 
-def close_redis() -> None:
+# ============================================================
+# Health
+# ============================================================
+
+
+async def redis_health() -> bool:
     """
-    Gracefully closes Redis connection.
+    Checks whether Redis is reachable.
+    """
+
+    try:
+
+        redis = await get_redis()
+
+        return await redis.ping()
+
+    except Exception:
+
+        logger.exception(
+            "Redis health check failed."
+        )
+
+        return False
+
+
+# ============================================================
+# Shutdown
+# ============================================================
+
+
+async def close_redis() -> None:
+    """
+    Gracefully closes the Redis connection.
     """
 
     global _redis
 
-    if _redis:
-        _redis.close()
+    if _redis is not None:
+
+        await _redis.aclose()
+
         _redis = None
+
+        logger.info(
+            "Redis connection closed."
+        )

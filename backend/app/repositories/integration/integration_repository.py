@@ -2,110 +2,118 @@
 ============================================================
 Integration Repository
 
-Handles external accounting integrations.
+Persistence for:
 
-Tables:
 - integration_connections
 - integration_syncs
 
-No business logic.
+Business logic belongs in IntegrationService.
 ============================================================
 """
 
-from datetime import UTC, datetime
-from typing import Any
+from __future__ import annotations
 
-from backend.app.core.enum.enums import IntegrationProvider
+from datetime import UTC, datetime
+from uuid import UUID
+
+from app.core.enum.database import IntegrationProvider
+from app.mappers.integration_mapper import (
+    IntegrationConnectionMapper,
+    IntegrationSyncMapper,
+)
+from app.models.domain.integration import (
+    IntegrationConnection,
+    IntegrationSync,
+)
 from app.repositories.base import BaseRepository
 
 
-class IntegrationRepository(BaseRepository):
+# ============================================================
+# Connection Repository
+# ============================================================
 
-    CONNECTION_TABLE = "integration_connections"
-    SYNC_TABLE = "integration_syncs"
 
-    def connections(self):
-        return self.db.table(self.CONNECTION_TABLE)
+class IntegrationConnectionRepository(BaseRepository):
+    """
+    Repository for integration_connections.
+    """
 
-    def syncs(self):
-        return self.db.table(self.SYNC_TABLE)
-    
-        # =========================================================
-    # Connections
-    # =========================================================
+    table_name = "integration_connections"
+    mapper = IntegrationConnectionMapper
 
     async def create_connection(
         self,
-        values: dict[str, Any],
-    ) -> dict:
-
-        result = (
-            self.connections()
-            .insert(values)
-            .execute()
-        )
-
-        return result.data[0]
+        connection: IntegrationConnection | dict,
+    ) -> IntegrationConnection | None:
+        return await self.create(connection)
 
     async def get_connection(
         self,
-        connection_id: str,
-    ) -> dict | None:
+        connection_id: UUID,
+    ) -> IntegrationConnection | None:
+        return await self.get(connection_id)
 
-        result = (
-            self.connections()
-            .select("*")
-            .eq("id", connection_id)
-            .limit(1)
-            .execute()
+    async def update_connection(
+        self,
+        connection_id: UUID,
+        data,
+    ) -> IntegrationConnection | None:
+
+        if isinstance(data, dict):
+            data["updated_at"] = datetime.now(UTC)
+
+        return await self.update(
+            connection_id,
+            data,
         )
 
-        return result.data[0] if result.data else None
+    async def delete_connection(
+        self,
+        connection_id: UUID,
+    ) -> bool:
+        return await self.delete(connection_id)
+
+    # --------------------------------------------------------
 
     async def get_org_connection(
         self,
-        org_id: str,
+        org_id: UUID,
         provider: IntegrationProvider,
-    ) -> dict | None:
-        """
-        Uses unique(org_id, provider).
-        """
+    ) -> IntegrationConnection | None:
 
-        result = (
-            self.connections()
+        response = (
+            self.table()
             .select("*")
-            .eq("org_id", org_id)
+            .eq("org_id", str(org_id))
             .eq("provider", provider.value)
             .limit(1)
             .execute()
         )
 
-        return result.data[0] if result.data else None
+        return self._one(response)
 
     async def list_org_connections(
         self,
-        org_id: str,
-    ) -> list[dict]:
+        org_id: UUID,
+    ) -> list[IntegrationConnection]:
 
-        result = (
-            self.connections()
+        response = (
+            self.table()
             .select("*")
-            .eq("org_id", org_id)
+            .eq("org_id", str(org_id))
+            .order("created_at", desc=True)
             .execute()
         )
 
-        return result.data or []
+        return self._many(response)
 
     async def list_active_connections(
         self,
         provider: IntegrationProvider,
-    ) -> list[dict]:
-        """
-        Uses idx_conn_active.
-        """
+    ) -> list[IntegrationConnection]:
 
-        result = (
-            self.connections()
+        response = (
+            self.table()
             .select("*")
             .eq("provider", provider.value)
             .eq("is_active", True)
@@ -113,42 +121,17 @@ class IntegrationRepository(BaseRepository):
             .execute()
         )
 
-        return result.data or []
-    
-        # =========================================================
-    # Connection Updates
-    # =========================================================
+        return self._many(response)
 
-    async def update_connection(
-        self,
-        connection_id: str,
-        values: dict[str, Any],
-    ) -> dict:
-        """
-        Internal update helper.
-        """
-
-        values["updated_at"] = datetime.now(UTC)
-
-        result = (
-            self.connections()
-            .update(values)
-            .eq("id", connection_id)
-            .execute()
-        )
-
-        return result.data[0]
+    # --------------------------------------------------------
 
     async def update_tokens(
         self,
-        connection_id: str,
+        connection_id: UUID,
         access_token: str,
         refresh_token: str | None,
-        expires_at: datetime | None,
-    ) -> dict:
-        """
-        Update OAuth tokens after a refresh.
-        """
+        expires_at,
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -161,11 +144,8 @@ class IntegrationRepository(BaseRepository):
 
     async def activate_connection(
         self,
-        connection_id: str,
-    ) -> dict:
-        """
-        Mark an integration as active.
-        """
+        connection_id: UUID,
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -176,11 +156,8 @@ class IntegrationRepository(BaseRepository):
 
     async def deactivate_connection(
         self,
-        connection_id: str,
-    ) -> dict:
-        """
-        Disable an integration.
-        """
+        connection_id: UUID,
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -191,11 +168,8 @@ class IntegrationRepository(BaseRepository):
 
     async def enable_sync(
         self,
-        connection_id: str,
-    ) -> dict:
-        """
-        Enable automatic synchronization.
-        """
+        connection_id: UUID,
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -206,11 +180,8 @@ class IntegrationRepository(BaseRepository):
 
     async def disable_sync(
         self,
-        connection_id: str,
-    ) -> dict:
-        """
-        Disable automatic synchronization.
-        """
+        connection_id: UUID,
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -221,12 +192,9 @@ class IntegrationRepository(BaseRepository):
 
     async def update_sync_cursor(
         self,
-        connection_id: str,
+        connection_id: UUID,
         sync_from_date,
-    ) -> dict:
-        """
-        Update the synchronization cursor.
-        """
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -237,13 +205,10 @@ class IntegrationRepository(BaseRepository):
 
     async def record_error(
         self,
-        connection_id: str,
+        connection_id: UUID,
         error: str,
         error_count: int,
-    ) -> dict:
-        """
-        Store the latest integration error.
-        """
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -257,11 +222,8 @@ class IntegrationRepository(BaseRepository):
 
     async def clear_error(
         self,
-        connection_id: str,
-    ) -> dict:
-        """
-        Clear the latest integration error.
-        """
+        connection_id: UUID,
+    ) -> IntegrationConnection | None:
 
         return await self.update_connection(
             connection_id,
@@ -272,246 +234,23 @@ class IntegrationRepository(BaseRepository):
                 "health_status": "healthy",
             },
         )
-    
-        # =========================================================
-    # Sync History
-    # =========================================================
-
-    async def create_sync(
-        self,
-        values: dict[str, Any],
-    ) -> dict:
-        """
-        Create a sync record.
-        """
-
-        result = (
-            self.syncs()
-            .insert(values)
-            .execute()
-        )
-
-        return result.data[0]
-
-    async def get_sync(
-        self,
-        sync_id: str,
-    ) -> dict | None:
-        """
-        Get a sync by ID.
-        """
-
-        result = (
-            self.syncs()
-            .select("*")
-            .eq("id", sync_id)
-            .limit(1)
-            .execute()
-        )
-
-        return result.data[0] if result.data else None
-
-    async def list_connection_syncs(
-        self,
-        connection_id: str,
-        limit: int = 50,
-    ) -> list[dict]:
-        """
-        List sync history for a connection.
-
-        Uses idx_syncs_conn.
-        """
-
-        result = (
-            self.syncs()
-            .select("*")
-            .eq("connection_id", connection_id)
-            .order(
-                "started_at",
-                desc=True,
-            )
-            .limit(limit)
-            .execute()
-        )
-
-        return result.data or []
-
-    async def list_org_syncs(
-        self,
-        org_id: str,
-        limit: int = 100,
-    ) -> list[dict]:
-        """
-        List organization sync history.
-
-        Uses idx_syncs_org.
-        """
-
-        result = (
-            self.syncs()
-            .select("*")
-            .eq("org_id", org_id)
-            .order(
-                "started_at",
-                desc=True,
-            )
-            .limit(limit)
-            .execute()
-        )
-
-        return result.data or []
-
-    async def complete_sync(
-        self,
-        sync_id: str,
-        values: dict[str, Any],
-    ) -> dict:
-        """
-        Complete a sync operation.
-
-        The caller provides fields such as:
-        - status
-        - cursor_after
-        - documents_created
-        - documents_updated
-        - documents_failed
-        - completed_at
-        - duration_ms
-        """
-
-        values.setdefault(
-            "completed_at",
-            datetime.now(UTC),
-        )
-
-        result = (
-            self.syncs()
-            .update(values)
-            .eq("id", sync_id)
-            .execute()
-        )
-
-        return result.data[0]
-
-    async def fail_sync(
-        self,
-        sync_id: str,
-        error_details: dict[str, Any],
-    ) -> dict:
-        """
-        Mark a sync as failed.
-        """
-
-        result = (
-            self.syncs()
-            .update(
-                {
-                    "status": "failed",
-                    "error_details": error_details,
-                    "completed_at": datetime.now(UTC),
-                }
-            )
-            .eq("id", sync_id)
-            .execute()
-        )
-
-        return result.data[0]
-    
-        # =========================================================
-    # Helpers
-    # =========================================================
-
-    async def connection_exists(
-        self,
-        connection_id: str,
-    ) -> bool:
-        """
-        Check whether an integration connection exists.
-        """
-
-        result = (
-            self.connections()
-            .select("id")
-            .eq("id", connection_id)
-            .limit(1)
-            .execute()
-        )
-
-        return bool(result.data)
-
-    async def sync_exists(
-        self,
-        sync_id: str,
-    ) -> bool:
-        """
-        Check whether a sync exists.
-        """
-
-        result = (
-            self.syncs()
-            .select("id")
-            .eq("id", sync_id)
-            .limit(1)
-            .execute()
-        )
-
-        return bool(result.data)
 
     async def has_active_connection(
         self,
-        org_id: str,
+        org_id: UUID,
         provider: IntegrationProvider,
     ) -> bool:
-        """
-        Check whether an organization has an active connection
-        for a provider.
-        """
 
-        result = (
-            self.connections()
+        response = (
+            self.table()
             .select("id")
-            .eq("org_id", org_id)
+            .eq("org_id", str(org_id))
             .eq("provider", provider.value)
             .eq("is_active", True)
             .limit(1)
             .execute()
         )
 
-        return bool(result.data)
+        return bool(response.data)
 
-    async def latest_sync(
-        self,
-        connection_id: str,
-    ) -> dict | None:
-        """
-        Return the most recent sync for a connection.
-        """
 
-        result = (
-            self.syncs()
-            .select("*")
-            .eq("connection_id", connection_id)
-            .order(
-                "started_at",
-                desc=True,
-            )
-            .limit(1)
-            .execute()
-        )
-
-        return result.data[0] if result.data else None
-
-    async def delete_connection(
-        self,
-        connection_id: str,
-    ) -> None:
-        """
-        Delete an integration connection.
-        """
-
-        (
-            self.connections()
-            .delete()
-            .eq("id", connection_id)
-            .execute()
-        )

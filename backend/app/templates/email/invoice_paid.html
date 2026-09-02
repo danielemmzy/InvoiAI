@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<h2>Invoice Paid</h2>
+
+<p>Hello {{ customer_name }},</p>
+
+<p>
+
+Invoice <strong>{{ invoice_number }}</strong>
+has been paid successfully.
+
+</p>
+
+<p>
+
+Amount
+
+<strong>{{ amount }}</strong>
+
+</p>
+
+<p>
+
+Thank you for using InvoiAI.
+
+</p>
+
+{% endblock %}

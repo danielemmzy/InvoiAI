@@ -18,9 +18,12 @@ Business logic belongs in AnalysisService.
 ============================================================
 """
 
+from uuid import UUID
+
 from app.repositories.base import BaseRepository
-from backend.app.core.enum.enums import (
-    Recommendation,
+from app.mappers.analysis_mapper import AnalysisMapper
+from app.core.enum.database import (
+    RecommendationType,
     RiskLevel,
 )
 from datetime import datetime, UTC
@@ -29,11 +32,13 @@ from datetime import datetime, UTC
 class AnalysisRepository(BaseRepository):
 
     table_name = "document_analyses"
+    mapper = AnalysisMapper
 
     def table(self):
         return self.db.table(self.table_name)
-    
+
         # =========================================================
+
     # Creation
     # =========================================================
 
@@ -45,11 +50,7 @@ class AnalysisRepository(BaseRepository):
         Persist a completed AI analysis.
         """
 
-        return (
-            self.table()
-            .insert(payload)
-            .execute()
-        )
+        return self.table().insert(payload).execute()
 
     async def update_analysis(
         self,
@@ -60,12 +61,7 @@ class AnalysisRepository(BaseRepository):
         Update analysis metadata.
         """
 
-        return (
-            self.table()
-            .update(payload)
-            .eq("id", analysis_id)
-            .execute()
-        )
+        return self.table().update(payload).eq("id", analysis_id).execute()
 
     async def delete_analysis(
         self,
@@ -77,14 +73,10 @@ class AnalysisRepository(BaseRepository):
         Normally only used internally.
         """
 
-        return (
-            self.table()
-            .delete()
-            .eq("id", analysis_id)
-            .execute()
-        )
-    
+        return self.table().delete().eq("id", analysis_id).execute()
+
         # =========================================================
+
     # Retrieval
     # =========================================================
 
@@ -96,13 +88,7 @@ class AnalysisRepository(BaseRepository):
         Retrieve an analysis by ID.
         """
 
-        return (
-            self.table()
-            .select("*")
-            .eq("id", analysis_id)
-            .single()
-            .execute()
-        )
+        return self.table().select("*").eq("id", analysis_id).single().execute()
 
     async def get_document_analysis(
         self,
@@ -139,7 +125,7 @@ class AnalysisRepository(BaseRepository):
 
     async def list_organization_analyses(
         self,
-        org_id: str,
+        org_id: UUID,
         limit: int = 50,
         offset: int = 0,
     ):
@@ -155,8 +141,9 @@ class AnalysisRepository(BaseRepository):
             .range(offset, offset + limit - 1)
             .execute()
         )
-    
+
         # =========================================================
+
     # Human Review
     # =========================================================
 
@@ -164,7 +151,7 @@ class AnalysisRepository(BaseRepository):
         self,
         analysis_id: str,
         reviewer_id: str,
-        decision: Recommendation,
+        decision: RecommendationType,
         override_reason: str | None = None,
     ):
         """
@@ -206,8 +193,9 @@ class AnalysisRepository(BaseRepository):
             .eq("id", analysis_id)
             .execute()
         )
-    
+
         # =========================================================
+
     # Statistics
     # =========================================================
 
@@ -219,14 +207,9 @@ class AnalysisRepository(BaseRepository):
         Count analyses for an organization.
         """
 
-        return (
-            self.table()
-            .select("id", count="exact")
-            .eq("org_id", org_id)
-            .execute()
-        )
+        return self.table().select("id", count="exact").eq("org_id", org_id).execute()
 
-    async def average_health_score(
+    async def get_health_scores(
         self,
         org_id: str,
     ):
@@ -234,12 +217,7 @@ class AnalysisRepository(BaseRepository):
         Retrieve health scores for averaging.
         """
 
-        return (
-            self.table()
-            .select("health_score")
-            .eq("org_id", org_id)
-            .execute()
-        )
+        return self.table().select("health_score").eq("org_id", org_id).execute()
 
     async def risk_distribution(
         self,
@@ -249,12 +227,7 @@ class AnalysisRepository(BaseRepository):
         Retrieve risk levels for distribution charts.
         """
 
-        return (
-            self.table()
-            .select("risk_level")
-            .eq("org_id", org_id)
-            .execute()
-        )
+        return self.table().select("risk_level").eq("org_id", org_id).execute()
 
     async def recommendation_distribution(
         self,
@@ -264,14 +237,10 @@ class AnalysisRepository(BaseRepository):
         Retrieve recommendation values for analytics.
         """
 
-        return (
-            self.table()
-            .select("recommendation")
-            .eq("org_id", org_id)
-            .execute()
-        )
-    
+        return self.table().select("recommendation").eq("org_id", org_id).execute()
+
         # =========================================================
+
     # Helpers
     # =========================================================
 
@@ -336,18 +305,17 @@ class AnalysisRepository(BaseRepository):
             return None
 
         return response.data[0]["analysis_version"]
-    
-    async def has_human_review( self, analysis_id: str,) -> bool:
-            """
-            Check whether an analysis has been reviewed by a human.
-            """
 
-            response = (
-                self.table()
-                .select("reviewed_at")
-                .eq("id", analysis_id)
-                .single()
-                .execute()
-            )
+    async def has_human_review(
+        self,
+        analysis_id: str,
+    ) -> bool:
+        """
+        Check whether an analysis has been reviewed by a human.
+        """
 
-            return response.data.get("reviewed_at") is not None
+        response = (
+            self.table().select("reviewed_at").eq("id", analysis_id).single().execute()
+        )
+
+        return response.data.get("reviewed_at") is not None

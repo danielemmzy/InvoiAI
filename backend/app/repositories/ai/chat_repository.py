@@ -1,29 +1,48 @@
-"""
-============================================================
-Chat Repository
-
-Handles:
-
-- chat_sessions
-- chat_messages
-- tool_calls
-
-No business logic.
-============================================================
-"""
+from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from decimal import Decimal
+from uuid import UUID
 
-from backend.app.core.enum.enums import ChatRole
+from app.core.enum.application import ApprovalStatus
+from app.core.enum.database import ApprovalDecision
+
+from app.mappers.chat_mapper import (
+    ChatMessageMapper,
+    ChatSessionMapper,
+    ToolCallMapper,
+)
+
+from app.models.domain.chat import (
+    ChatMessage,
+    ChatSession,
+    ToolCall,
+)
+
 from app.repositories.base import BaseRepository
 
 
 class ChatRepository(BaseRepository):
+    """
+    Repository for chat persistence.
+
+    Owns three tables:
+
+    - chat_sessions
+    - chat_messages
+    - tool_calls
+    """
+
+    table_name = "chat_sessions"
+    mapper = ChatSessionMapper
 
     SESSION_TABLE = "chat_sessions"
     MESSAGE_TABLE = "chat_messages"
     TOOL_TABLE = "tool_calls"
+
+    # =========================================================
+    # Table Helpers
+    # =========================================================
 
     def sessions(self):
         return self.db.table(self.SESSION_TABLE)
@@ -33,109 +52,91 @@ class ChatRepository(BaseRepository):
 
     def tools(self):
         return self.db.table(self.TOOL_TABLE)
-    
-        # =========================================================
+
+    # =========================================================
     # Sessions
     # =========================================================
 
     async def create_session(
         self,
-        values: dict[str, Any],
-    ) -> dict:
-
-        result = (
-            self.sessions()
-            .insert(values)
-            .execute()
-        )
-
-        return result.data[0]
+        session: ChatSession | dict,
+    ) -> ChatSession | None:
+        return await self.create(session)
 
     async def get_session(
         self,
-        session_id: str,
-    ) -> dict | None:
-
-        result = (
-            self.sessions()
-            .select("*")
-            .eq("id", session_id)
-            .limit(1)
-            .execute()
-        )
-
-        return result.data[0] if result.data else None
-
-    async def list_user_sessions(
-        self,
-        user_id: str,
-        limit: int = 50,
-    ) -> list[dict]:
-        """
-        Uses idx_sessions_user.
-        """
-
-        result = (
-            self.sessions()
-            .select("*")
-            .eq("user_id", user_id)
-            .order(
-                "created_at",
-                desc=True,
-            )
-            .limit(limit)
-            .execute()
-        )
-
-        return result.data or []
-
-    async def list_org_sessions(
-        self,
-        org_id: str,
-        limit: int = 100,
-    ) -> list[dict]:
-        """
-        Uses idx_sessions_org.
-        """
-
-        result = (
-            self.sessions()
-            .select("*")
-            .eq("org_id", org_id)
-            .order(
-                "created_at",
-                desc=True,
-            )
-            .limit(limit)
-            .execute()
-        )
-
-        return result.data or []
+        session_id: UUID,
+    ) -> ChatSession | None:
+        return await self.get(session_id)
 
     async def update_session(
         self,
-        session_id: str,
-        values: dict[str, Any],
-    ) -> dict:
+        session_id: UUID,
+        values,
+    ) -> ChatSession | None:
 
-        values["updated_at"] = datetime.now(UTC)
+        if isinstance(values, dict):
+            values["updated_at"] = datetime.now(UTC)
 
-        result = (
+        return await self.update(
+            session_id,
+            values,
+        )
+
+    async def list_user_sessions(
+        self,
+        user_id: UUID,
+        limit: int = 50,
+    ) -> list[ChatSession]:
+
+        response = (
             self.sessions()
-            .update(values)
-            .eq("id", session_id)
+            .select("*")
+            .eq("user_id", str(user_id))
+            .order(
+                "created_at",
+                desc=True,
+            )
+            .limit(limit)
             .execute()
         )
 
-        return result.data[0]
+        old = self.mapper
+        self.mapper = ChatSessionMapper
+        result = self._many(response)
+        self.mapper = old
+
+        return result
+
+    async def list_org_sessions(
+        self,
+        org_id: UUID,
+        limit: int = 100,
+    ) -> list[ChatSession]:
+
+        response = (
+            self.sessions()
+            .select("*")
+            .eq("org_id", str(org_id))
+            .order(
+                "created_at",
+                desc=True,
+            )
+            .limit(limit)
+            .execute()
+        )
+
+        old = self.mapper
+        self.mapper = ChatSessionMapper
+        result = self._many(response)
+        self.mapper = old
+
+        return result
 
     async def archive_session(
         self,
-        session_id: str,
-    ) -> dict:
-        """
-        Mark a session as inactive.
-        """
+        session_id: UUID,
+    ) -> ChatSession | None:
 
         return await self.update_session(
             session_id,
@@ -143,59 +144,76 @@ class ChatRepository(BaseRepository):
                 "is_active": False,
             },
         )
-    
-        # =========================================================
+
+    async def session_exists(
+        self,
+        session_id: UUID,
+    ) -> bool:
+
+        old = self.table_name
+        self.table_name = self.SESSION_TABLE
+
+        exists = await self.exists(
+            "id",
+            session_id,
+        )
+
+        self.table_name = old
+
+        return exists
+    # =========================================================
     # Messages
     # =========================================================
 
     async def create_message(
         self,
-        values: dict[str, Any],
-    ) -> dict:
-        """
-        Store a chat message.
-        """
+        message: ChatMessage | dict,
+    ) -> ChatMessage | None:
 
-        result = (
+        response = (
             self.messages()
-            .insert(values)
+            .insert(
+                ChatMessageMapper.to_insert(message)
+            )
             .execute()
         )
 
-        return result.data[0]
+        return ChatMessageMapper.to_domain(
+            self.raw(response)
+        )
+
 
     async def get_message(
         self,
-        message_id: str,
-    ) -> dict | None:
-        """
-        Get a message by ID.
-        """
+        message_id: UUID,
+    ) -> ChatMessage | None:
 
-        result = (
+        response = (
             self.messages()
             .select("*")
-            .eq("id", message_id)
+            .eq("id", str(message_id))
             .limit(1)
             .execute()
         )
 
-        return result.data[0] if result.data else None
+        row = self.raw(response)
+
+        return (
+            ChatMessageMapper.to_domain(row)
+            if row
+            else None
+        )
+
 
     async def list_session_messages(
         self,
-        session_id: str,
-    ) -> list[dict]:
-        """
-        Returns the complete conversation.
+        session_id: UUID,
+    ) -> list[ChatMessage]:
 
-        Uses idx_messages_session.
-        """
-
-        result = (
+        response = (
             self.messages()
             .select("*")
-            .eq("session_id", session_id)
+            .eq("session_id", str(session_id))
             .order(
                 "created_at",
                 desc=False,
@@ -203,23 +221,21 @@ class ChatRepository(BaseRepository):
             .execute()
         )
 
-        return result.data or []
+        return ChatMessageMapper.to_domain_list(
+            self.raw_many(response)
+        )
+
 
     async def list_recent_messages(
         self,
-        session_id: str,
+        session_id: UUID,
         limit: int = 20,
-    ) -> list[dict]:
-        """
-        Returns the latest conversation history.
+    ) -> list[ChatMessage]:
 
-        Used for LLM context windows.
-        """
-
-        result = (
+        response = (
             self.messages()
             .select("*")
-            .eq("session_id", session_id)
+            .eq("session_id", str(session_id))
             .order(
                 "created_at",
                 desc=True,
@@ -228,24 +244,23 @@ class ChatRepository(BaseRepository):
             .execute()
         )
 
-        messages = result.data or []
+        messages = ChatMessageMapper.to_domain_list(
+            self.raw_many(response)
+        )
 
-        # Return oldest → newest for prompt construction
         return list(reversed(messages))
+
 
     async def list_org_messages(
         self,
-        org_id: str,
+        org_id: UUID,
         limit: int = 100,
-    ) -> list[dict]:
-        """
-        Uses idx_messages_org.
-        """
+    ) -> list[ChatMessage]:
 
-        result = (
+        response = (
             self.messages()
             .select("*")
-            .eq("org_id", org_id)
+            .eq("org_id", str(org_id))
             .order(
                 "created_at",
                 desc=True,
@@ -254,79 +269,100 @@ class ChatRepository(BaseRepository):
             .execute()
         )
 
-        return result.data or []
+        return ChatMessageMapper.to_domain_list(
+            self.raw_many(response)
+        )
+
+
+    async def message_exists(
+        self,
+        message_id: UUID,
+    ) -> bool:
+
+        response = (
+            self.messages()
+            .select("id")
+            .eq("id", str(message_id))
+            .limit(1)
+            .execute()
+        )
+
+        return bool(response.data)
     
-        # =========================================================
+    # =========================================================
     # Tool Calls
     # =========================================================
 
     async def create_tool_call(
         self,
-        values: dict[str, Any],
-    ) -> dict:
-        """
-        Store an AI tool call.
-        """
+        tool_call: ToolCall | dict,
+    ) -> ToolCall | None:
 
-        result = (
+        response = (
             self.tools()
-            .insert(values)
+            .insert(
+                ToolCallMapper.to_insert(tool_call)
+            )
             .execute()
         )
 
-        return result.data[0]
+        row = self.raw(response)
+
+        return (
+            ToolCallMapper.to_domain(row)
+            if row
+            else None
+        )
+
 
     async def get_tool_call(
         self,
-        tool_call_id: str,
-    ) -> dict | None:
-        """
-        Get a tool call by ID.
-        """
+        tool_call_id: UUID,
+    ) -> ToolCall | None:
 
-        result = (
+        response = (
             self.tools()
             .select("*")
-            .eq("id", tool_call_id)
+            .eq("id", str(tool_call_id))
             .limit(1)
             .execute()
         )
 
-        return result.data[0] if result.data else None
+        row = self.raw(response)
+
+        return (
+            ToolCallMapper.to_domain(row)
+            if row
+            else None
+        )
+
 
     async def list_message_tool_calls(
         self,
-        message_id: str,
-    ) -> list[dict]:
-        """
-        Return tool calls for a message.
+        message_id: UUID,
+    ) -> list[ToolCall]:
 
-        Uses idx_tool_calls_message.
-        """
-
-        result = (
+        response = (
             self.tools()
             .select("*")
-            .eq("message_id", message_id)
+            .eq("message_id", str(message_id))
             .execute()
         )
 
-        return result.data or []
+        return ToolCallMapper.to_domain_list(
+            self.raw_many(response)
+        )
+
 
     async def list_session_tool_calls(
         self,
-        session_id: str,
-    ) -> list[dict]:
-        """
-        Return tool calls for a chat session.
+        session_id: UUID,
+    ) -> list[ToolCall]:
 
-        Uses idx_tool_calls_session.
-        """
-
-        result = (
+        response = (
             self.tools()
             .select("*")
-            .eq("session_id", session_id)
+            .eq("session_id", str(session_id))
             .order(
                 "created_at",
                 desc=False,
@@ -334,23 +370,21 @@ class ChatRepository(BaseRepository):
             .execute()
         )
 
-        return result.data or []
+        return ToolCallMapper.to_domain_list(
+            self.raw_many(response)
+        )
+
 
     async def list_tool_usage(
         self,
-        org_id: str,
+        org_id: UUID,
         tool_name: str,
-    ) -> list[dict]:
-        """
-        Return usage for a specific tool.
+    ) -> list[ToolCall]:
 
-        Uses idx_tool_calls_name.
-        """
-
-        result = (
+        response = (
             self.tools()
             .select("*")
-            .eq("org_id", org_id)
+            .eq("org_id", str(org_id))
             .eq("tool_name", tool_name)
             .order(
                 "created_at",
@@ -359,137 +393,22 @@ class ChatRepository(BaseRepository):
             .execute()
         )
 
-        return result.data or []
-    
-        # =========================================================
-    # Session State
-    # =========================================================
-
-    async def increment_session_statistics(
-        self,
-        session_id: str,
-        messages: int,
-        tokens: int,
-        cost_usd: float,
-    ) -> dict:
-        """
-        Update running chat statistics.
-
-        The service supplies the new totals.
-        """
-
-        session = await self.get_session(session_id)
-
-        if session is None:
-            raise self.not_found("Chat session")
-
-        values = {
-            "total_messages": session["total_messages"] + messages,
-            "total_tokens": session["total_tokens"] + tokens,
-            "total_cost_usd": session["total_cost_usd"] + cost_usd,
-            "updated_at": datetime.now(UTC),
-        }
-
-        result = (
-            self.sessions()
-            .update(values)
-            .eq("id", session_id)
-            .execute()
+        return ToolCallMapper.to_domain_list(
+            self.raw_many(response)
         )
 
-        return result.data[0]
-
-    async def attach_documents_to_session(
-        self,
-        session_id: str,
-        document_ids: list[str],
-    ) -> dict:
-        """
-        Replace session document context.
-        """
-
-        result = (
-            self.sessions()
-            .update(
-                {
-                    "document_ids": document_ids,
-                    "updated_at": datetime.now(UTC),
-                }
-            )
-            .eq("id", session_id)
-            .execute()
-        )
-
-        return result.data[0]
-
-    async def attach_vendors_to_session(
-        self,
-        session_id: str,
-        vendor_ids: list[str],
-    ) -> dict:
-        """
-        Replace session vendor context.
-        """
-
-        result = (
-            self.sessions()
-            .update(
-                {
-                    "vendor_ids": vendor_ids,
-                    "updated_at": datetime.now(UTC),
-                }
-            )
-            .eq("id", session_id)
-            .execute()
-        )
-
-        return result.data[0]
-    
-        # =========================================================
-    # Helpers
-    # =========================================================
-
-    async def session_exists(
-        self,
-        session_id: str,
-    ) -> bool:
-
-        result = (
-            self.sessions()
-            .select("id")
-            .eq("id", session_id)
-            .limit(1)
-            .execute()
-        )
-
-        return bool(result.data)
-
-    async def message_exists(
-        self,
-        message_id: str,
-    ) -> bool:
-
-        result = (
-            self.messages()
-            .select("id")
-            .eq("id", message_id)
-            .limit(1)
-            .execute()
-        )
-
-        return bool(result.data)
 
     async def tool_call_exists(
         self,
-        tool_call_id: str,
+        tool_call_id: UUID,
     ) -> bool:
 
-        result = (
+        response = (
             self.tools()
             .select("id")
-            .eq("id", tool_call_id)
+            .eq("id", str(tool_call_id))
             .limit(1)
             .execute()
         )
 
-        return bool(result.data)
+        return bool(response.data)

@@ -1,0 +1,9 @@
+Invoice Overdue
+
+Invoice {{ invoice_number }}
+
+is overdue.
+
+Please review it.
+
+InvoiAI

@@ -59,3 +59,4 @@ Thumbs.db
 *.pem
 *.egg-info/
 structure.txt
+.aider*

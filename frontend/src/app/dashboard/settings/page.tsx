@@ -1,51 +1,102 @@
 "use client";
+
 // Settings page — /dashboard/settings
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { ExternalLink, Loader2 } from "lucide-react";
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppStore } from "@/store/useAppStore";
-import { authApi } from "@/api/auth";
 
 export default function SettingsPage() {
   const { user } = useAppStore();
-  const { logout, connectGoogle, isConnectingGoogle } = useAuth();
+  const { logout } = useAuth();
 
-  const { data: googleStatus } = useQuery({
-    queryKey: ["googleStatus"],
-    queryFn: authApi.getGoogleStatus,
+  const [googleStatus, setGoogleStatus] = useState<{
+    google_connected: boolean;
+  }>({
+    google_connected: false,
   });
+
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+
+  const connectGoogle = async () => {
+    try {
+      setIsConnectingGoogle(true);
+
+      // TODO: Replace this with your real Google OAuth endpoint.
+      // Example:
+      // window.location.href = "/api/google/connect";
+
+      console.warn("Google connection endpoint is not configured yet.");
+
+      // Keep the button from appearing stuck if no endpoint is configured.
+      setIsConnectingGoogle(false);
+    } catch (error) {
+      console.error("Failed to connect Google account:", error);
+      setIsConnectingGoogle(false);
+    }
+  };
 
   return (
     <DashboardLayout>
       <div className="dash-page-header">
         <div className="section-label">§04 Account / Settings</div>
         <div className="dash-title serif">Settings</div>
-        <div className="dash-subtitle">Manage your account and integrations.</div>
+        <div className="dash-subtitle">
+          Manage your account and integrations.
+        </div>
       </div>
 
-      <div style={{ maxWidth: 520, display: "flex", flexDirection: "column", gap: 16 }}>
-
+      <div
+        style={{
+          maxWidth: 520,
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
         {/* Account info */}
         <div className="card">
           <div className="card-header">
             <span className="card-title">Account</span>
           </div>
+
           <div style={{ padding: "4px 0" }}>
             {[
-              { label: "Email", value: user?.email },
-              { label: "User ID", value: user?.user_id?.slice(0, 16) + "..." },
-              { label: "Plan", value: user?.plan?.toUpperCase() || "FREE", isTag: true },
+              {
+                label: "Email",
+                value: user?.email,
+              },
+              {
+                label: "User ID",
+                value: user?.user_id
+                  ? `${user.user_id.slice(0, 16)}...`
+                  : undefined,
+              },
+              {
+                label: "Plan",
+                value: user?.plan?.toUpperCase() || "FREE",
+                isTag: true,
+              },
             ].map((row) => (
-              <div key={row.label} className="settings-row" style={{ padding: "14px 20px" }}>
+              <div
+                key={row.label}
+                className="settings-row"
+                style={{ padding: "14px 20px" }}
+              >
                 <div>
                   <div className="settings-key">{row.label}</div>
                 </div>
+
                 {row.isTag ? (
-                  <span className="badge badge-industry">{row.value}</span>
+                  <span className="badge badge-industry">
+                    {row.value}
+                  </span>
                 ) : (
-                  <span className="settings-val">{row.value}</span>
+                  <span className="settings-val">
+                    {row.value || "—"}
+                  </span>
                 )}
               </div>
             ))}
@@ -55,53 +106,105 @@ export default function SettingsPage() {
         {/* Google Sheets */}
         <div className="card">
           <div className="card-header">
-            <span className="card-title">Google Sheets Integration</span>
+            <span className="card-title">
+              Google Sheets Integration
+            </span>
           </div>
+
           <div style={{ padding: "16px 20px" }}>
-            <p style={{ fontSize: 13, color: "#6B6860", lineHeight: 1.6, marginBottom: 16 }}>
-              Connect your Google account to export documents directly to your
-              Google Drive as Sheets. No billing required.
+            <p
+              style={{
+                fontSize: 13,
+                color: "#6B6860",
+                lineHeight: 1.6,
+                marginBottom: 16,
+              }}
+            >
+              Connect your Google account to export documents directly to
+              your Google Drive as Sheets. No billing required.
             </p>
 
-            {googleStatus?.google_connected ? (
+            {googleStatus.google_connected ? (
               <div className="connected-badge">
                 <div className="connected-dot" />
-                <span className="connected-text">Google account connected</span>
+                <span className="connected-text">
+                  Google account connected
+                </span>
               </div>
             ) : (
               <button
-                onClick={() => connectGoogle()}
+                onClick={connectGoogle}
                 disabled={isConnectingGoogle}
                 className="btn-primary"
-                style={{ fontSize: 13, padding: "10px 18px" }}
+                style={{
+                  fontSize: 13,
+                  padding: "10px 18px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
               >
-                {isConnectingGoogle
-                  ? <><Loader2 size={14} className="animate-spin" /> Connecting...</>
-                  : <><ExternalLink size={14} /> Connect Google Account</>
-                }
+                {isConnectingGoogle ? (
+                  <>
+                    <Loader2
+                      size={14}
+                      className="animate-spin"
+                    />
+                    Connecting...
+                  </>
+                ) : (
+                  <>
+                    <ExternalLink size={14} />
+                    Connect Google Account
+                  </>
+                )}
               </button>
             )}
           </div>
         </div>
 
         {/* Danger zone */}
-        <div className="card" style={{ border: "0.5px solid #FDECEA" }}>
-          <div className="card-header" style={{ borderColor: "#FDECEA" }}>
-            <span className="card-title" style={{ color: "#E57373" }}>Danger Zone</span>
+        <div
+          className="card"
+          style={{ border: "0.5px solid #FDECEA" }}
+        >
+          <div
+            className="card-header"
+            style={{ borderColor: "#FDECEA" }}
+          >
+            <span
+              className="card-title"
+              style={{ color: "#E57373" }}
+            >
+              Danger Zone
+            </span>
           </div>
+
           <div style={{ padding: "16px 20px" }}>
-            <div className="settings-row" style={{ borderBottom: "none", padding: 0 }}>
+            <div
+              className="settings-row"
+              style={{
+                borderBottom: "none",
+                padding: 0,
+              }}
+            >
               <div>
                 <div className="settings-key">Sign out</div>
-                <div className="settings-sub">Sign out of your InvoiAI account on this device.</div>
+
+                <div className="settings-sub">
+                  Sign out of your InvoiAI account on this device.
+                </div>
               </div>
-              <button className="btn-danger" onClick={() => logout()}>
+
+              <button
+                className="btn-danger"
+                onClick={() => logout()}
+              >
                 Sign out
               </button>
             </div>
           </div>
         </div>
-
       </div>
     </DashboardLayout>
   );

@@ -1,166 +1,102 @@
-"""
-============================================================
-Audit Repository
+from __future__ import annotations
 
-Responsible ONLY for audit log persistence.
+from uuid import UUID
 
-No business logic.
-No authorization.
-No logging decisions.
-============================================================
-"""
-
-from typing import Any
-from unittest import result
-
+from app.mappers.audit_mapper import AuditLogMapper
+from app.models.domain.audit import AuditLog
 from app.repositories.base import BaseRepository
 
 
 class AuditRepository(BaseRepository):
+    """
+    Repository for audit_logs.
+    """
 
-    TABLE = "audit_logs"
+    table_name = "audit_logs"
+    mapper = AuditLogMapper
 
-    def logs(self):
-        return self.db.table(self.TABLE)
-
-        # =========================================================
-
-    # Create
-    # =========================================================
-
-    async def create(
+    async def create_log(
         self,
-        values: dict[str, Any],
-    ) -> dict:
-        """
-        Persist an audit record.
-        """
+        log: AuditLog | dict,
+    ) -> AuditLog | None:
+        return await self.create(log)
 
-        result = self.logs().insert(values).execute()
-
-        return result.data[0]
-
-        # =========================================================
-
-    # Get
-    # =========================================================
-
-    async def get(
+    async def get_log(
         self,
-        audit_id: str,
-    ) -> dict | None:
+        log_id: UUID,
+    ) -> AuditLog | None:
+        return await self.get(log_id)
 
-        result = self.logs().select("*").eq("id", audit_id).limit(1).execute()
-
-        return result.data[0] if result.data else None
-
-    async def exists(
+    async def delete_log(
         self,
-        audit_id: str,
+        log_id: UUID,
     ) -> bool:
+        return await self.delete(log_id)
 
-        result = self.logs().select("id").eq("id", audit_id).limit(1).execute()
-
-        return bool(result.data)
-
-    async def list_org_logs(
+    async def list_organization_logs(
         self,
-        org_id: str,
+        org_id: UUID,
         limit: int = 100,
-    ) -> list[dict]:
+        offset: int = 0,
+    ) -> list[AuditLog]:
 
-        result = (
-            self.logs()
+        response = (
+            self.table()
             .select("*")
-            .eq("org_id", org_id)
-            .order(
-                "created_at",
-                desc=True,
-            )
-            .limit(limit)
+            .eq("org_id", str(org_id))
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
             .execute()
         )
 
-        return result.data or []
-    
+        return self._many(response)
+
     async def list_user_logs(
         self,
-        user_id: str,
+        user_id: UUID,
         limit: int = 100,
-    ) -> list[dict]:
+        offset: int = 0,
+    ) -> list[AuditLog]:
 
-        result = (
-            self.logs()
+        response = (
+            self.table()
             .select("*")
-            .eq("user_id", user_id)
-            .order(
-                "created_at",
-                desc=True,
-            )
-            .limit(limit)
+            .eq("user_id", str(user_id))
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
             .execute()
         )
 
-        return result.data or []
-    
-    async def list_action_logs(
-        self,
-        org_id: str,
-        action: str,
-        limit: int = 100,
-    ) -> list[dict]:
+        return self._many(response)
 
-        result = (
-            self.logs()
-            .select("*")
-            .eq("org_id", org_id)
-            .eq("action", action)
-            .order(
-                "created_at",
-                desc=True,
-            )
-            .limit(limit)
-            .execute()
-        )
-
-        return result.data or []
-    
     async def list_resource_logs(
         self,
-        org_id: str,
         resource_type: str,
-        resource_id: str,
-    ) -> list[dict]:
+        resource_id: UUID,
+    ) -> list[AuditLog]:
 
-        result = (
-            self.logs()
+        response = (
+            self.table()
             .select("*")
-            .eq("org_id", org_id)
             .eq("resource_type", resource_type)
-            .eq("resource_id", resource_id)
-            .order(
-                "created_at",
-                desc=True,
-            )
+            .eq("resource_id", str(resource_id))
+            .order("created_at", desc=True)
             .execute()
         )
 
-        return result.data or []
-    
+        return self._many(response)
+
     async def list_request_logs(
         self,
         request_id: str,
-    ) -> list[dict]:
+    ) -> list[AuditLog]:
 
-        result = (
-            self.logs()
+        response = (
+            self.table()
             .select("*")
             .eq("request_id", request_id)
-            .order(
-                "created_at",
-                desc=False,
-            )
+            .order("created_at")
             .execute()
         )
 
-        return result.data or []
+        return self._many(response)

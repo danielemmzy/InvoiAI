@@ -1,0 +1,9 @@
+"use client";
+import DashboardLayout from "@/components/layout/DashboardLayout";
+import { useAPExceptions } from "@/hooks/useAP";
+import { AlertTriangle, Check, Loader2 } from "lucide-react";
+import { apApi } from "@/api/ap";
+import { useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
+export default function ExceptionsPage(){const q=useAPExceptions();const qc=useQueryClient();async function resolve(id:string,waive=false){try{waive?await apApi.waiveException(id,"Resolved from AP control center"):await apApi.resolveException(id,"Resolved from AP control center");qc.invalidateQueries({queryKey:["ap-exceptions"]});toast.success(waive?"Exception waived":"Exception resolved")}catch(e){toast.error("Could not update the exception.")}}return <DashboardLayout><div className="page-head"><div><div className="eyebrow">Accounts payable</div><h1 className="page-title">Exceptions</h1><p className="page-subtitle">Only invoices that need a decision belong here.</p></div></div>{q.isLoading?<div className="loading-state"><Loader2 className="spin"/>Loading exceptions…</div>:q.isError?<div className="soft-notice"><AlertTriangle size={17}/>Couldn't load exceptions. Refresh and try again.</div>:<div className="panel">{(q.data??[]).length===0?<div className="empty-state"><CheckCircle2/>Everything is clear.</div>:(q.data??[]).map(e=><div className="exception-card" key={e.id}><div className="exception-main"><span className={`severity ${e.severity||"warning"}`}>{e.severity||"review"}</span><h3>{e.exception_type.replaceAll("_"," ")}</h3><p>{e.message||"This invoice needs review before it can continue."}</p><small>{e.document_id}</small></div><div className="exception-actions"><button className="btn-secondary" onClick={()=>resolve(e.id)}>Resolve</button><button className="btn-quiet" onClick={()=>resolve(e.id,true)}>Waive</button></div></div>)}</div>}</DashboardLayout>}
+function CheckCircle2(){return <Check size={24}/>}

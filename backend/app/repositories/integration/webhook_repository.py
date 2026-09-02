@@ -2,82 +2,76 @@
 ============================================================
 Webhook Repository
 
-Handles webhook persistence.
+Persistence for integration_webhooks.
 
-Table:
-- integration_webhooks
-
-No business logic.
+Business logic belongs in IntegrationService.
 ============================================================
 """
 
-from datetime import UTC, datetime
-from typing import Any
+from __future__ import annotations
 
-from backend.app.core.enum.enums import IntegrationProvider
+from datetime import UTC, datetime
+from uuid import UUID
+
+from app.core.enum.database import IntegrationProvider
+from app.mappers.integration_mapper import IntegrationWebhookMapper
+from app.models.domain.integration import IntegrationWebhook
 from app.repositories.base import BaseRepository
 
 
 class WebhookRepository(BaseRepository):
+    """
+    Repository for integration_webhooks.
+    """
 
-    TABLE = "integration_webhooks"
+    table_name = "integration_webhooks"
 
-    def webhooks(self):
-        return self.db.table(self.TABLE)
-    
-        # =========================================================
-    # Create
+    mapper = IntegrationWebhookMapper
+
+    # =========================================================
+    # CRUD
     # =========================================================
 
     async def create_webhook(
         self,
-        values: dict[str, Any],
-    ) -> dict:
-        """
-        Store an incoming webhook.
-        """
-
-        result = (
-            self.webhooks()
-            .insert(values)
-            .execute()
-        )
-
-        return result.data[0]
-
-    # =========================================================
-    # Get
-    # =========================================================
+        webhook: IntegrationWebhook | dict,
+    ) -> IntegrationWebhook | None:
+        return await self.create(webhook)
 
     async def get_webhook(
         self,
-        webhook_id: str,
-    ) -> dict | None:
-        """
-        Get webhook by ID.
-        """
+        webhook_id: UUID,
+    ) -> IntegrationWebhook | None:
+        return await self.get(webhook_id)
 
-        result = (
-            self.webhooks()
-            .select("*")
-            .eq("id", webhook_id)
-            .limit(1)
-            .execute()
+    async def update_webhook(
+        self,
+        webhook_id: UUID,
+        data,
+    ) -> IntegrationWebhook | None:
+        return await self.update(
+            webhook_id,
+            data,
         )
 
-        return result.data[0] if result.data else None
+    async def delete_webhook(
+        self,
+        webhook_id: UUID,
+    ) -> bool:
+        return await self.delete(webhook_id)
+
+    # =========================================================
+    # Queries
+    # =========================================================
 
     async def get_provider_event(
         self,
         provider: IntegrationProvider,
         event_id: str,
-    ) -> dict | None:
-        """
-        Uses unique(provider, event_id).
-        """
+    ) -> IntegrationWebhook | None:
 
-        result = (
-            self.webhooks()
+        response = (
+            self.table()
             .select("*")
             .eq("provider", provider.value)
             .eq("event_id", event_id)
@@ -85,21 +79,18 @@ class WebhookRepository(BaseRepository):
             .execute()
         )
 
-        return result.data[0] if result.data else None
+        return self._one(response)
 
     async def list_org_webhooks(
         self,
-        org_id: str,
+        org_id: UUID,
         limit: int = 100,
-    ) -> list[dict]:
-        """
-        Uses idx_webhooks_org.
-        """
+    ) -> list[IntegrationWebhook]:
 
-        result = (
-            self.webhooks()
+        response = (
+            self.table()
             .select("*")
-            .eq("org_id", org_id)
+            .eq("org_id", str(org_id))
             .order(
                 "received_at",
                 desc=True,
@@ -108,22 +99,15 @@ class WebhookRepository(BaseRepository):
             .execute()
         )
 
-        return result.data or []
-    
-        # =========================================================
-    # Processing
-    # =========================================================
+        return self._many(response)
 
     async def list_unprocessed(
         self,
         provider: IntegrationProvider,
-    ) -> list[dict]:
-        """
-        Uses idx_webhooks_unprocessed.
-        """
+    ) -> list[IntegrationWebhook]:
 
-        result = (
-            self.webhooks()
+        response = (
+            self.table()
             .select("*")
             .eq("provider", provider.value)
             .eq("processed", False)
@@ -131,86 +115,56 @@ class WebhookRepository(BaseRepository):
             .execute()
         )
 
-        return result.data or []
+        return self._many(response)
+
+    # =========================================================
+    # State Updates
+    # =========================================================
 
     async def mark_processed(
         self,
-        webhook_id: str,
-        document_id: str | None = None,
-    ) -> dict:
-        """
-        Mark webhook as processed.
-        """
+        webhook_id: UUID,
+        document_id: UUID | None = None,
+    ) -> IntegrationWebhook | None:
 
         values = {
             "processed": True,
             "processed_at": datetime.now(UTC),
         }
 
-        if document_id is not None:
-            values["document_id"] = document_id
+        if document_id:
+            values["document_id"] = str(document_id)
 
-        result = (
-            self.webhooks()
-            .update(values)
-            .eq("id", webhook_id)
-            .execute()
+        return await self.update(
+            webhook_id,
+            values,
         )
-
-        return result.data[0]
 
     async def record_error(
         self,
-        webhook_id: str,
+        webhook_id: UUID,
         error: str,
-    ) -> dict:
-        """
-        Store webhook processing error.
-        """
+    ) -> IntegrationWebhook | None:
 
-        result = (
-            self.webhooks()
-            .update(
-                {
-                    "error": error,
-                }
-            )
-            .eq("id", webhook_id)
-            .execute()
+        return await self.update(
+            webhook_id,
+            {
+                "error": error,
+            },
         )
 
-        return result.data[0]
-    
-        # =========================================================
+    # =========================================================
     # Helpers
     # =========================================================
-
-    async def webhook_exists(
-        self,
-        webhook_id: str,
-    ) -> bool:
-
-        result = (
-            self.webhooks()
-            .select("id")
-            .eq("id", webhook_id)
-            .limit(1)
-            .execute()
-        )
-
-        return bool(result.data)
 
     async def event_exists(
         self,
         provider: IntegrationProvider,
         event_id: str,
     ) -> bool:
-        """
-        Prevent duplicate webhook processing.
-        """
 
-        result = (
-            self.webhooks()
+        response = (
+            self.table()
             .select("id")
             .eq("provider", provider.value)
             .eq("event_id", event_id)
@@ -218,4 +172,4 @@ class WebhookRepository(BaseRepository):
             .execute()
         )
 
-        return bool(result.data)
+        return bool(response.data)

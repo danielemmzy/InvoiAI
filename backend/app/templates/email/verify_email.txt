@@ -1,0 +1,7 @@
+Verify Email
+
+Open
+
+{{ verify_url }}
+
+to verify your account.

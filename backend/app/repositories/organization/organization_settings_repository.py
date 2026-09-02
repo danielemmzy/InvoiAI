@@ -11,60 +11,88 @@ Business logic belongs in OrganizationService.
 ============================================================
 """
 
-from datetime import UTC, datetime
-from typing import Any
+from __future__ import annotations
 
+from datetime import UTC, datetime
+from uuid import UUID
+
+from app.mappers.organization_mapper import OrganizationSettingsMapper
+from app.models.domain.organization import OrganizationSettings
 from app.repositories.base import BaseRepository
 
 
 class OrganizationSettingsRepository(BaseRepository):
     """
-    Repository for organization settings.
+    Repository for organization_settings.
     """
 
-    TABLE = "organization_settings"
+    table_name = "organization_settings"
+    mapper = OrganizationSettingsMapper
 
-    def table(self):
-        return self.db.table(self.TABLE)
-
-    # ========================================================
-    # Retrieval
-    # ========================================================
+    async def create_settings(
+        self,
+        settings: OrganizationSettings | dict,
+    ) -> OrganizationSettings | None:
+        return await self.create(settings)
 
     async def get_settings(
         self,
-        org_id: str,
-    ):
-        """
-        Retrieve organization settings.
-        """
+        org_id: UUID,
+    ) -> OrganizationSettings | None:
 
-        return (
+        response = (
             self.table()
             .select("*")
-            .eq("org_id", org_id)
-            .single()
+            .eq("org_id", str(org_id))
+            .limit(1)
             .execute()
         )
 
-    # ========================================================
-    # Updates
-    # ========================================================
+        return self._one(response)
 
     async def update_settings(
         self,
-        org_id: str,
-        values: dict[str, Any],
-    ):
-        """
-        Update organization settings.
-        """
+        org_id: UUID,
+        data,
+    ) -> OrganizationSettings | None:
 
-        values["updated_at"] = datetime.now(UTC)
+        if isinstance(data, dict):
+            data["updated_at"] = datetime.now(UTC)
 
-        return (
+        response = (
             self.table()
-            .update(values)
-            .eq("org_id", org_id)
+            .update(data)
+            .eq("org_id", str(org_id))
             .execute()
         )
+
+        return self._one(response)
+
+    async def delete_settings(
+        self,
+        org_id: UUID,
+    ) -> bool:
+
+        response = (
+            self.table()
+            .delete()
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+
+        return bool(response.data)
+
+    async def settings_exist(
+        self,
+        org_id: UUID,
+    ) -> bool:
+
+        response = (
+            self.table()
+            .select("id")
+            .eq("org_id", str(org_id))
+            .limit(1)
+            .execute()
+        )
+
+        return bool(response.data)

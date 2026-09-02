@@ -1,0 +1,14 @@
+create extension if not exists pgcrypto;
+alter table public.documents add column if not exists classification_confidence numeric(5,4);
+alter table public.documents add column if not exists classification_reason text;
+alter table public.documents add column if not exists workflow_route text;
+alter table public.documents add column if not exists classified_at timestamptz;
+create index if not exists idx_documents_workflow_route on public.documents(org_id, workflow_route, created_at desc);
+create index if not exists idx_documents_classification on public.documents(org_id, document_type, classified_at desc);
+alter table public.financial_transactions add column if not exists document_id uuid references public.documents(id) on delete set null;
+alter table public.financial_transactions add column if not exists transaction_fingerprint text;
+create unique index if not exists uq_financial_tx_fingerprint on public.financial_transactions(owner_type, owner_id, transaction_fingerprint) where transaction_fingerprint is not null;
+create index if not exists idx_financial_tx_document on public.financial_transactions(document_id);
+create table if not exists public.statement_imports (id uuid primary key default gen_random_uuid(), owner_type public.finance_owner_type not null, owner_id uuid not null, document_id uuid not null references public.documents(id) on delete cascade, account_id uuid references public.financial_accounts(id) on delete set null, statement_start date, statement_end date, opening_balance numeric(18,2), closing_balance numeric(18,2), transactions_found integer not null default 0, transactions_imported integer not null default 0, transactions_skipped integer not null default 0, confidence numeric(5,4), status text not null default 'completed', created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique(document_id));
+create index if not exists idx_statement_import_owner_date on public.statement_imports(owner_type, owner_id, created_at desc);
+alter table public.statement_imports enable row level security;

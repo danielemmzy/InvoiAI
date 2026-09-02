@@ -1,22 +1,28 @@
 "use client";
 
+// ============================================================
+// SECURITY FIX (see SECURITY_FIXES_APPLIED.md item #2):
+// accessToken / refreshToken are gone from this store entirely — they
+// never touch localStorage (directly or via zustand's persist) again.
+// The backend's httpOnly cookies are the only place a session token
+// lives now. This store only tracks who's logged in and which
+// workspace is active, both of which are fine to persist since
+// neither is a credential on its own.
+// ============================================================
+
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { User } from "@/types";
+import type { WorkspaceSummary } from "@/types/workspace";
 
 interface AppState {
   user: User | null;
-  accessToken: string | null;
-  refreshToken: string | null;
   isAuthenticated: boolean;
   sidebarOpen: boolean;
   uploadProgress: number;
+  activeWorkspace: WorkspaceSummary | null;
 
-  setAuth: (
-    user: User,
-    accessToken: string,
-    refreshToken: string
-  ) => void;
+  setAuth: (user: User) => void;
 
   updateUser: (user: User) => void;
 
@@ -24,53 +30,48 @@ interface AppState {
 
   setSidebarOpen: (open: boolean) => void;
   setUploadProgress: (p: number) => void;
+  setActiveWorkspace: (workspace: WorkspaceSummary | null) => void;
 }
 
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       user: null,
-      accessToken: null,
-      refreshToken: null,
       isAuthenticated: false,
       sidebarOpen: true,
       uploadProgress: 0,
+      activeWorkspace: null,
 
-      setAuth: (user, accessToken, refreshToken) => {
-        if (typeof window !== "undefined") {
-          localStorage.setItem("access_token", accessToken);
-          localStorage.setItem("refresh_token", refreshToken);
-
-          document.cookie = `access_token=${accessToken}; path=/; max-age=${
-            7 * 24 * 60 * 60
-          }`;
-        }
-
+      setAuth: (user) => {
         set({
           user,
-          accessToken,
-          refreshToken,
-          isAuthenticated: !!accessToken,
+          isAuthenticated: true,
         });
       },
 
       updateUser: (user) => set({ user }),
 
+      setActiveWorkspace: (workspace) => {
+        if (typeof window !== "undefined") {
+          if (workspace) {
+            localStorage.setItem("active_workspace_id", workspace.id);
+          } else {
+            localStorage.removeItem("active_workspace_id");
+          }
+        }
+        set({ activeWorkspace: workspace });
+      },
+
       logout: () => {
         if (typeof window !== "undefined") {
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("refresh_token");
           localStorage.removeItem("invoiai-store");
-
-          document.cookie =
-            "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+          localStorage.removeItem("active_workspace_id");
         }
 
         set({
           user: null,
-          accessToken: null,
-          refreshToken: null,
           isAuthenticated: false,
+          activeWorkspace: null,
         });
       },
 
@@ -87,15 +88,18 @@ export const useAppStore = create<AppState>()(
     {
       name: "invoiai-store",
 
-      version: 2,
+      // Bumped from 2 -> 3: accessToken/refreshToken no longer exist on
+      // this store's shape at all. Anyone rehydrating an old v2 payload
+      // gets a clean logged-out state instead of a store with stray
+      // token fields nothing reads anymore.
+      version: 3,
 
       migrate: (persistedState: unknown, version) => {
-        if (version < 2) {
+        if (version < 3) {
           return {
             user: null,
-            accessToken: null,
-            refreshToken: null,
             isAuthenticated: false,
+            activeWorkspace: null,
           };
         }
 
@@ -103,8 +107,9 @@ export const useAppStore = create<AppState>()(
       },
 
       partialize: (state) => ({
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
+        activeWorkspace: state.activeWorkspace,
       }),
     }
   )

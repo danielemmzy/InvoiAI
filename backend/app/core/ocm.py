@@ -30,11 +30,11 @@ from typing import Optional
 from fastapi import Depends, Header
 
 from app.core.auth import get_current_user
-from app.models.context import (
+from app.context import (
     AuthUser,
     OrganizationContext,
 )
-from app.services.organization_service import OrganizationService
+from app.core.container import get_container
 
 
 async def get_org_context(
@@ -59,7 +59,7 @@ async def get_org_context(
 
     """
 
-    service = OrganizationService()
+    service = get_container().organization_service
 
     return await service.build_context(
         user=user,

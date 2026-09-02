@@ -1,83 +1,269 @@
-// ─────────────────────────────────────────────
-// API Client — Axios instance
-// Handles auth headers + token refresh automatically
-// Like a Dio client in Flutter
-// ─────────────────────────────────────────────
+import axios, {
+  AxiosError,
+  AxiosInstance,
+  InternalAxiosRequestConfig,
+} from "axios";
 
-import axios, { AxiosInstance, AxiosError } from "axios";
+const BASE_URL = "/api/bff";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const IDEMPOTENT = new Set([
+  "get",
+  "head",
+  "options",
+]);
 
-const client: AxiosInstance = axios.create({
-  baseURL: BASE_URL,
-  timeout: 30000,
-  headers: { "Content-Type": "application/json" },
-});
+export const client: AxiosInstance =
+  axios.create({
+    baseURL: BASE_URL,
+    timeout: 15_000,
 
-// ── Request interceptor ───────────────────────────────────────────────────────
-// Attaches the JWT token to every request automatically
-// Equivalent to Flutter Dio interceptors
-client.interceptors.request.use(
-  (config) => {
-    if (typeof window !== "undefined") {
-      const token = localStorage.getItem("access_token");
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
+    // Browser -> Next.js is same-origin.
+    // The only credential is the httpOnly BFF session cookie.
+    withCredentials: true,
+
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+function isBrowser(): boolean {
+  return typeof window !== "undefined";
+}
+
+function isAuthEndpoint(
+  url: string,
+): boolean {
+  return /\/auth\/(login|signup|refresh|forgot-password|resend-verification|reset-password)\/?$/.test(
+    url,
+  );
+}
+
+function removeLegacyBrowserTokens(): void {
+  if (!isBrowser()) {
+    return;
+  }
+
+  // Remove credentials left behind by the previous architecture.
+  localStorage.removeItem(
+    "access_token",
+  );
+
+  localStorage.removeItem(
+    "refresh_token",
+  );
+}
+
+export function getErrorMessage(
+  error: unknown,
+  fallback =
+    "Something went wrong. Please try again.",
+): string {
+  if (axios.isAxiosError(error)) {
+    const detail =
+      error.response?.data?.detail;
+
+    if (
+      typeof detail === "string" &&
+      detail.trim()
+    ) {
+      return detail;
     }
+
+    if (
+      error.code ===
+      "ECONNABORTED"
+    ) {
+      return "The server took too long to respond. Please try again.";
+    }
+
+    if (!error.response) {
+      return "We couldn't reach InvoiAI. Check your connection and try again.";
+    }
+
+    if (
+      error.response.status >=
+      500
+    ) {
+      return "InvoiAI is temporarily unavailable. Please try again shortly.";
+    }
+  }
+
+  return fallback;
+}
+
+/* ============================================================
+   REQUEST
+   ============================================================ */
+
+client.interceptors.request.use(
+  (
+    config: InternalAxiosRequestConfig,
+  ) => {
+    if (!isBrowser()) {
+      return config;
+    }
+
+    removeLegacyBrowserTokens();
+
+    /*
+     * IMPORTANT:
+     *
+     * There is deliberately NO:
+     *
+     * localStorage.getItem("access_token")
+     *
+     * and NO:
+     *
+     * Authorization: Bearer ...
+     *
+     * here.
+     *
+     * Next.js BFF owns authentication.
+     */
+
+    const workspaceId =
+      localStorage.getItem(
+        "active_workspace_id",
+      );
+
+    if (workspaceId) {
+      config.headers[
+        "X-Org-Id"
+      ] = workspaceId;
+    }
+
+    try {
+      if (
+        typeof crypto !==
+          "undefined" &&
+        typeof crypto.randomUUID ===
+          "function"
+      ) {
+        config.headers[
+          "X-Client-Request-ID"
+        ] = crypto.randomUUID();
+      }
+    } catch {
+      // Optional tracing header.
+    }
+
     return config;
   },
-  (error) => Promise.reject(error)
 );
 
-// ── Response interceptor ──────────────────────────────────────────────────────
-// Handles 401s — tries to refresh the token automatically
-// If refresh fails, clears storage and redirects to login
+/* ============================================================
+   RESPONSE
+   ============================================================ */
+
 client.interceptors.response.use(
   (response) => response,
+
   async (error: AxiosError) => {
-    const original = error.config as typeof error.config & { _retry?: boolean };
+    const original =
+      error.config as
+        | (InternalAxiosRequestConfig & {
+            _sessionHandled?: boolean;
+          })
+        | undefined;
 
-    if (error.response?.status === 401 && !original?._retry) {
-      original._retry = true;
-
-      const refreshToken = localStorage.getItem("refresh_token");
-      if (!refreshToken) {
-        // No refresh token — clear and redirect to login
-        clearAuthStorage();
-        window.location.href = "/login";
-        return Promise.reject(error);
-      }
-
-      try {
-        const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
-          refresh_token: refreshToken,
-        });
-
-        localStorage.setItem("access_token", data.access_token);
-        localStorage.setItem("refresh_token", data.refresh_token);
-
-        // Retry the original request with new token
-        if (original?.headers) {
-          original.headers.Authorization = `Bearer ${data.access_token}`;
-        }
-        return client(original!);
-      } catch {
-        // Refresh failed — force logout
-        clearAuthStorage();
-        window.location.href = "/login";
-        return Promise.reject(error);
-      }
+    if (
+      !original ||
+      !isBrowser() ||
+      error.response?.status !== 401
+    ) {
+      return Promise.reject(
+        error,
+      );
     }
 
-    return Promise.reject(error);
-  }
+    /*
+     * The BFF already performs token refresh server-side.
+     *
+     * NEVER call /auth/refresh from this interceptor.
+     */
+    if (
+      original._sessionHandled ||
+      isAuthEndpoint(
+        original.url || "",
+      )
+    ) {
+      return Promise.reject(
+        error,
+      );
+    }
+
+    original._sessionHandled = true;
+
+    clearAuthStorage();
+
+    if (
+      !window.location.pathname.startsWith(
+        "/login",
+      )
+    ) {
+      window.location.assign(
+        "/login?reason=session-expired",
+      );
+    }
+
+    return Promise.reject(
+      error,
+    );
+  },
 );
 
-export function clearAuthStorage() {
-  localStorage.removeItem("access_token");
-  localStorage.removeItem("refresh_token");
-  localStorage.removeItem("user");
+/* ============================================================
+   CLIENT CLEANUP
+   ============================================================ */
+
+export function clearAuthStorage(): void {
+  if (!isBrowser()) {
+    return;
+  }
+
+  removeLegacyBrowserTokens();
+
+  localStorage.removeItem(
+    "invoiai-store",
+  );
+
+  localStorage.removeItem(
+    "active_workspace_id",
+  );
+
+  /*
+   * DO NOT attempt document.cookie deletion.
+   *
+   * invoiai_bff_session is httpOnly.
+   *
+   * The BFF owns deletion of that cookie.
+   */
+}
+
+/* ============================================================
+   RETRY
+   ============================================================ */
+
+export function shouldRetry(
+  error: unknown,
+): boolean {
+  if (!axios.isAxiosError(error)) {
+    return false;
+  }
+
+  const method =
+    error.config?.method?.toLowerCase() ||
+    "get";
+
+  const status =
+    error.response?.status;
+
+  return (
+    IDEMPOTENT.has(method) &&
+    (!status ||
+      status >= 500 ||
+      status === 429)
+  );
 }
 
 export default client;

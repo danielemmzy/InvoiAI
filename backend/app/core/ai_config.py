@@ -20,8 +20,7 @@ Never hardcode AI values elsewhere.
 from dataclasses import dataclass
 from typing import Final
 
-from backend.app.core.enum.enums import AIProvider
-
+from app.core.enum.database import AIProvider
 
 # ============================================================
 # AI Models
@@ -137,6 +136,7 @@ PROMPT_VERSION: Final = "2.0.0"
 # Verification Pipeline
 # ============================================================
 
+
 @dataclass(frozen=True)
 class VerificationModule:
     name: str
@@ -145,42 +145,34 @@ class VerificationModule:
 
 
 VERIFICATION_PIPELINE: Final = [
-
     VerificationModule(
         name="ocr_validation",
         weight=0.10,
     ),
-
     VerificationModule(
         name="math_check",
         weight=0.20,
     ),
-
     VerificationModule(
         name="vendor_check",
         weight=0.15,
     ),
-
     VerificationModule(
         name="duplicate_check",
         weight=0.15,
     ),
-
     VerificationModule(
         name="historical_check",
         weight=0.15,
     ),
-
     VerificationModule(
         name="po_match",
         weight=0.10,
     ),
-
     VerificationModule(
         name="fraud_check",
         weight=0.10,
     ),
-
     VerificationModule(
         name="compliance_check",
         weight=0.05,

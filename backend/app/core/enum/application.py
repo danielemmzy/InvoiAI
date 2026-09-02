@@ -1,13 +1,21 @@
 """
 ============================================================
-app/core/enums.py
+Application Enums
 
-Shared application enums.
+These enums DO NOT mirror PostgreSQL.
 
-These enums mirror the PostgreSQL enums and should be used
-throughout the backend instead of raw strings.
+They are used only inside the application.
 
-Never hardcode enum values in routers, services or repositories.
+Examples:
+- AI providers
+- OCR engines
+- Chat roles
+- Subscription lifecycle
+- Workflow state
+- Audit actions
+
+If an enum is persisted in PostgreSQL,
+it belongs in database.py instead.
 ============================================================
 """
 
@@ -15,109 +23,7 @@ from enum import StrEnum
 
 
 # ============================================================
-# Organization
-# ============================================================
-
-class OrgRole(StrEnum):
-    OWNER = "owner"
-    ADMIN = "admin"
-    APPROVER = "approver"
-    MEMBER = "member"
-    VIEWER = "viewer"
-
-
-# ============================================================
-# Subscription Plans
-# ============================================================
-
-class PlanType(StrEnum):
-    FREE = "free"
-    STARTER = "starter"
-    PRO = "pro"
-    ENTERPRISE = "enterprise"
-
-
-# ============================================================
-# Document Status
-# ============================================================
-
-class DocumentStatus(StrEnum):
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-# ============================================================
-# Processing Pipeline
-# ============================================================
-
-class PipelineStage(StrEnum):
-    UPLOADED = "uploaded"
-    QUEUED = "queued"
-    OCR = "ocr"
-    EXTRACTION = "extraction"
-    ANALYSIS = "analysis"
-    APPROVAL = "approval"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-# ============================================================
-# Document Source
-# ============================================================
-
-class DocumentSource(StrEnum):
-    MANUAL = "manual"
-    QUICKBOOKS = "quickbooks"
-    XERO = "xero"
-    EMAIL = "email"
-    GOOGLE_DRIVE = "google_drive"
-    API = "api"
-
-
-# ============================================================
-# Document Type
-# ============================================================
-
-class DocumentType(StrEnum):
-    INVOICE = "invoice"
-    RECEIPT = "receipt"
-    PURCHASE_ORDER = "purchase_order"
-    QUOTATION = "quotation"
-    CONTRACT = "contract"
-    CREDIT_NOTE = "credit_note"
-    DEBIT_NOTE = "debit_note"
-    BANK_STATEMENT = "bank_statement"
-    SPREADSHEET = "spreadsheet"
-    CSV = "csv"
-    DELIVERY_NOTE = "delivery_note"
-    EXPENSE_REPORT = "expense_report"
-    OTHER = "other"
-
-
-# ============================================================
-# Risk
-# ============================================================
-
-class RiskLevel(StrEnum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-# ============================================================
-# AI Recommendation
-# ============================================================
-
-class Recommendation(StrEnum):
-    APPROVE = "approve"
-    REVIEW = "review"
-    REJECT = "reject"
-
-
-# ============================================================
-# AI Provider
+# AI
 # ============================================================
 
 class AIProvider(StrEnum):
@@ -126,69 +32,38 @@ class AIProvider(StrEnum):
     GOOGLE = "google"
 
 
+class OCREngine(StrEnum):
+    GPT4O_VISION = "gpt4o_vision"
+    PDFPLUMBER = "pdfplumber"
+    TESSERACT = "tesseract"
+    TEXTRACT = "textract"
+
+
 # ============================================================
-# Background Jobs
+# Subscription
 # ============================================================
 
-class JobStatus(StrEnum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    RETRYING = "retrying"
+class SubscriptionStatus(StrEnum):
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
     CANCELLED = "cancelled"
-
-
-class JobType(StrEnum):
-    OCR = "ocr"
-    EXTRACTION = "extraction"
-    ANALYSIS = "analysis"
-    EMBEDDING = "embedding"
-    APPROVAL = "approval"
-    SYNC = "sync"
-    EMAIL = "email"
-    EXPORT = "export"
-    IMPORT = "import"
-    WEBHOOK = "webhook"
-    CLEANUP = "cleanup"
+    UNPAID = "unpaid"
+    PAUSED = "paused"
 
 
 # ============================================================
-# Integrations
-# ============================================================
-
-class IntegrationProvider(StrEnum):
-    QUICKBOOKS = "quickbooks"
-    XERO = "xero"
-    GOOGLE_DRIVE = "google_drive"
-    OUTLOOK = "outlook"
-    GMAIL = "gmail"
-
-
-class IntegrationStatus(StrEnum):
-    CONNECTED = "connected"
-    DISCONNECTED = "disconnected"
-    EXPIRED = "expired"
-    ERROR = "error"
-
-
-# ============================================================
-# Approval
+# Approval Workflow
 # ============================================================
 
 class ApprovalStatus(StrEnum):
     PENDING = "pending"
+    IN_REVIEW = "in_review"
     APPROVED = "approved"
     REJECTED = "rejected"
+    ESCALATED = "escalated"
     CANCELLED = "cancelled"
-
-
-class ApprovalDecision(StrEnum):
-    PENDING = "pending"
-    APPROVE = "approve"
-    REJECT = "reject"
-    ESCALATE = "escalate"
-    REQUEST_CHANGES = "request_changes"
+    EXPIRED = "expired"
 
 
 # ============================================================
@@ -214,6 +89,18 @@ class AuditAction(StrEnum):
     LOGIN = "login"
     LOGOUT = "logout"
     EXPORT = "export"
+    IMPORT = "import"
+    APPROVE = "approve"
+    REJECT = "reject"
+    ESCALATE = "escalate"
+    RESTORE = "restore"
 
+# ============================================================
+# Integrations
+# ============================================================
 
-
+class IntegrationStatus(StrEnum):
+    CONNECTED = "connected"
+    DISCONNECTED = "disconnected"
+    EXPIRED = "expired"
+    ERROR = "error"
