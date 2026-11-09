@@ -85,10 +85,17 @@ class GLCodingService:
         manual_account = next((a for a in accounts if (manual_id and str(a.id) == str(manual_id)) or (manual_code and a.account_code == str(manual_code)) or (manual_name and a.account_name == str(manual_name))), None)
         if manual_account and manual_account.is_postable:
             return InvoiceCoding(**base, gl_account_id=manual_account.id, confidence=Decimal("100"), source=APCodingSource.MANUAL, status=APCodingStatus.APPROVED)
-        for rule in rules:
+        exact_vendor_rules = [
+            rule for rule in rules
+            if rule.vendor_id and rule.vendor_id == vendor_id
+            and not rule.description_pattern and not rule.sku_pattern
+        ]
+        pattern_rules = [rule for rule in rules if rule not in exact_vendor_rules]
+        for rule in exact_vendor_rules + pattern_rules:
             if self._rule_matches(rule, item, vendor_id):
                 await self.rules.increment_match_count(rule.id)
-                return InvoiceCoding(**base, gl_account_id=rule.gl_account_id, department_id=rule.department_id, cost_center_id=rule.cost_center_id, project_id=rule.project_id, tax_code_id=rule.tax_code_id, confidence=Decimal("95"), source=APCodingSource.RULE, coding_rule_id=rule.id, status=APCodingStatus.AUTO_CODED)
+                explanation = "Matched the exact supplier coding rule." if rule in exact_vendor_rules else "Matched a description or SKU coding pattern."
+                return InvoiceCoding(**base, gl_account_id=rule.gl_account_id, department_id=rule.department_id, cost_center_id=rule.cost_center_id, project_id=rule.project_id, tax_code_id=rule.tax_code_id, confidence=Decimal("95"), source=APCodingSource.RULE, reasoning=explanation, coding_rule_id=rule.id, status=APCodingStatus.AUTO_CODED)
 
         desc = (item.get("description") or "").strip()
         if vendor_id and desc:
@@ -100,22 +107,24 @@ class GLCodingService:
                     if old_coding and old_coding[0].get("gl_account_id"):
                         account = next((a for a in accounts if str(a.id) == str(old_coding[0]["gl_account_id"])), None)
                         if account:
-                            return InvoiceCoding(**base, gl_account_id=account.id, confidence=Decimal("90"), source=APCodingSource.HISTORICAL, status=APCodingStatus.AUTO_CODED)
+                            return InvoiceCoding(**base, gl_account_id=account.id, confidence=Decimal("90"), source=APCodingSource.HISTORICAL, reasoning="Matched a similar line from this supplier’s coding history.", status=APCodingStatus.AUTO_CODED)
 
         if accounts and settings.ap_gl_ai_enabled:
             suggestion = await self._ai_suggest(item, accounts)
             if suggestion:
                 confidence = Decimal(str(suggestion.get("confidence", 60)))
                 account = suggestion.get("account")
-                return InvoiceCoding(**base, gl_account_id=account.id if account else None, confidence=confidence, source=APCodingSource.AI_SUGGESTED, status=APCodingStatus.AUTO_CODED if confidence >= AUTO_CODE_CONFIDENCE else APCodingStatus.NEEDS_REVIEW)
-        return InvoiceCoding(**base, confidence=Decimal("0"), source=APCodingSource.MANUAL, status=APCodingStatus.NEEDS_REVIEW)
+                return InvoiceCoding(**base, gl_account_id=account.id if account else None, confidence=confidence, source=APCodingSource.AI_SUGGESTED, reasoning=(suggestion.get("reason") or "Suggested by AI from the invoice line and available accounts.")[:240], status=APCodingStatus.AUTO_CODED if confidence >= AUTO_CODE_CONFIDENCE else APCodingStatus.NEEDS_REVIEW)
+        return InvoiceCoding(**base, confidence=Decimal("0"), source=APCodingSource.MANUAL, reasoning="No rule or matching coding history was found; choose an account manually.", status=APCodingStatus.NEEDS_REVIEW)
 
     @staticmethod
     def _rule_matches(rule, item, vendor_id):
         if rule.vendor_id and rule.vendor_id != vendor_id: return False
-        if rule.description_pattern and rule.description_pattern.lower() not in (item.get("description") or "").lower(): return False
-        if rule.sku_pattern and rule.sku_pattern.lower() not in (item.get("sku") or "").lower(): return False
-        return True
+        description_match = bool(rule.description_pattern and rule.description_pattern.lower() in (item.get("description") or "").lower())
+        sku_match = bool(rule.sku_pattern and rule.sku_pattern.lower() in (item.get("sku") or "").lower())
+        if not rule.description_pattern and not rule.sku_pattern:
+            return bool(rule.vendor_id and rule.vendor_id == vendor_id)
+        return description_match or sku_match
 
     async def _ai_suggest(self, item, accounts):
         if not settings.ap_gl_ai_enabled or settings.ai_provider == "disabled":

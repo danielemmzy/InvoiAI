@@ -27,9 +27,9 @@ export function useSyncChartOfAccounts() {
     mutationFn: apApi.syncChartOfAccounts,
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["chart-of-accounts", ws] });
-      toast.success(`${result?.synced ?? "Chart of Accounts"} synced from QuickBooks.`);
+      toast.success(`Chart of Accounts synced from ${result?.provider ?? "the active accounting provider"}.`);
     },
-    onError: (e) => toast.error(getErrorMessage(e, "QuickBooks account sync failed.")),
+    onError: (e) => toast.error(getErrorMessage(e, "Chart of Accounts sync failed.")),
   });
 }
 

@@ -28,17 +28,21 @@ class QuickBooksAccountingProvider(AccountingProvider):
 
     name = "quickbooks"
 
-    def __init__(self, org_id: UUID, db=None) -> None:
+    def __init__(self, org_id: UUID, db=None, connection_id: str | None = None) -> None:
         self.org_id = org_id
         self.db = db or get_supabase()
+        self.connection_id = connection_id
         self.bill_sync = BillSyncService(self.db)
 
     async def _realm_id(self) -> str:
-        conn = (
+        query = (
             self.db.table("integration_connections").select("realm_id")
             .eq("org_id", str(self.org_id)).eq("provider", IntegrationProvider.QUICKBOOKS.value)
-            .eq("is_active", True).limit(1).execute().data
+            .eq("is_active", True)
         )
+        if self.connection_id:
+            query = query.eq("id", self.connection_id)
+        conn = query.limit(1).execute().data
         if not conn or not conn[0].get("realm_id"):
             raise NoActiveAccountingProviderError(f"No active QuickBooks connection for org {self.org_id}.")
         return conn[0]["realm_id"]
