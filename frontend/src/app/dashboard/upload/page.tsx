@@ -8,6 +8,7 @@ import {
 
 import {
   useDropzone,
+  type FileRejection,
 } from "react-dropzone";
 
 import Link from "next/link";
@@ -38,12 +39,14 @@ import { usePlanCatalog } from "@/hooks/useBilling";
 import { useAppStore } from "@/store/useAppStore";
 
 import DuplicateUploadDialog from "@/components/documents/DuplicateUploadDialog";
+import { describeUploadRejection } from "@/lib/uploadErrors";
 
 export default function UploadPage() {
   const [
     files,
     setFiles,
   ] = useState<File[]>([]);
+  const [overflowRejections, setOverflowRejections] = useState<FileRejection[]>([]);
 
   const [
     industry,
@@ -114,6 +117,14 @@ export default function UploadPage() {
   const onDrop =
     useCallback(
       (accepted: File[]) => {
+        const available = Math.max(0, batchLimit - files.length);
+        const overflow = accepted.slice(available);
+        setOverflowRejections(
+          overflow.map((file) => ({
+            file,
+            errors: [{ code: "too-many-files", message: "Batch limit reached." }],
+          })),
+        );
         setFiles(
           (previous) => {
             const combined =
@@ -122,27 +133,18 @@ export default function UploadPage() {
                 ...accepted,
               ];
 
-            if (
-              combined.length >
-              batchLimit
-            ) {
-              return combined.slice(
-                0,
-                batchLimit
-              );
-            }
-
-            return combined;
+            return combined.slice(0, batchLimit);
           }
         );
       },
-      [batchLimit]
+      [batchLimit, files.length]
     );
 
   const {
     getRootProps,
     getInputProps,
     isDragActive,
+    fileRejections,
   } = useDropzone({
     onDrop,
 
@@ -164,6 +166,8 @@ export default function UploadPage() {
 
     maxFiles:
       batchLimit,
+
+    maxSize: 10 * 1024 * 1024,
 
     disabled:
       isUploading,
@@ -488,6 +492,32 @@ export default function UploadPage() {
             </div>
           )}
         </div>
+
+        {(fileRejections.length > 0 || overflowRejections.length > 0) && (
+          <div
+            role="alert"
+            aria-live="polite"
+            className="card"
+            style={{
+              padding: 14,
+              marginTop: 12,
+              border: "1px solid #E8B4AA",
+              background: "#FFF8F6",
+              color: "#8D3025",
+            }}
+          >
+            <div className="card-title" style={{ color: "inherit", fontSize: 13 }}>
+              Some files could not be added
+            </div>
+            <ul style={{ margin: "8px 0 0", paddingLeft: 20 }}>
+              {[...fileRejections, ...overflowRejections].map(({ file, errors }, index) => (
+                <li key={`${file.name}-${index}`} style={{ marginTop: 4, fontSize: 12 }}>
+                  <strong>{file.name}:</strong> {describeUploadRejection(errors)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Upload progress */}
         {isUploading && (
