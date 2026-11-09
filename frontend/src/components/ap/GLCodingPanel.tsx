@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Save, Sparkles, X } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import toast from "react-hot-toast";
 import { apApi, ChartOfAccount, InvoiceCoding } from "@/api/ap";
 import { getErrorMessage } from "@/api/client";
@@ -34,7 +34,7 @@ export default function GLCodingPanel({
   const [codings, setCodings] = useState<Record<string, InvoiceCoding>>({});
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
-  const [showInactive, setShowInactive] = useState(false);
+  const [approving, setApproving] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -61,8 +61,8 @@ export default function GLCodingPanel({
   }, [invoiceId, apStatus]);
 
   const postableAccounts = useMemo(() => {
-    return accounts.filter((a) => a.is_postable && (showInactive || a.is_active));
-  }, [accounts, showInactive]);
+    return accounts.filter((a) => a.is_active && a.is_postable);
+  }, [accounts]);
 
   const accountOptions = useMemo(() => {
     return postableAccounts.map((a) => ({
@@ -126,6 +126,20 @@ export default function GLCodingPanel({
     }
   };
 
+  const handleApproveCodings = async () => {
+    if (approving) return;
+    setApproving(true);
+    try {
+      await apApi.approveCodings(invoiceId);
+      toast.success("Line coding approved.");
+      onCodingSaved();
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Could not approve line coding."));
+    } finally {
+      setApproving(false);
+    }
+  };
+
   if (loadingAccounts) {
     return (
       <section className="panel" style={{ padding: 22, borderRadius: 18 }}>
@@ -138,9 +152,12 @@ export default function GLCodingPanel({
   }
 
   const isCodingPhase = apStatus === "coding" || apStatus === "coding_exception";
-  const allLinesCoded = lineItems.every(
-    (line) => codings[line.id]?.gl_account_id || line.gl_account_id
-  );
+  const hasActiveAccount = (line: Props["lineItems"][number]) => {
+    const accountId = codings[line.id]?.gl_account_id || line.gl_account_id;
+    return Boolean(accountId && postableAccounts.some((account) => account.id === accountId));
+  };
+  const codedLineCount = lineItems.filter(hasActiveAccount).length;
+  const allLinesCoded = lineItems.length > 0 && codedLineCount === lineItems.length;
 
   if (!isCodingPhase) return null;
 
@@ -154,10 +171,6 @@ export default function GLCodingPanel({
             {accountOptions.length === 0 && <span style={{ color: "#C0392B" }}> No postable accounts — add them in Settings → Accounting first.</span>}
           </p>
         </div>
-        <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "#6B6860" }}>
-          <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
-          Show inactive
-        </label>
       </div>
 
       {lineItems.length === 0 && (
@@ -183,6 +196,8 @@ export default function GLCodingPanel({
               const accountName = coding?.account_name || line.gl_account_name;
               const confidence = coding?.confidence;
               const source = coding?.source || (line.gl_account_id ? "manual" : "none");
+              const currentAccountId = coding?.gl_account_id || line.gl_account_id || "";
+              const currentAccountIsSelectable = postableAccounts.some((a) => a.id === currentAccountId);
 
               return (
                 <tr key={line.id} style={{ borderTop: "1px solid #EBE6DC" }}>
@@ -197,7 +212,7 @@ export default function GLCodingPanel({
                     {line.amount ? `$${Number(line.amount).toFixed(2)}` : "—"}
                   </td>
                   <td style={{ padding: "11px 10px" }}>
-                    {hasAccount ? (
+                    {hasAccount && (
                       <div>
                         <div style={{ fontWeight: 600 }}>{accountCode}</div>
                         <div style={{ fontSize: 12, color: "#6B6860" }}>{accountName}</div>
@@ -211,54 +226,47 @@ export default function GLCodingPanel({
                             </span>
                           )}
                         </div>
+                        {coding?.reasoning && (
+                          <div style={{ marginTop: 5, maxWidth: 420, fontSize: 11, color: "#6B6860" }}>
+                            {coding.reasoning}
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <select
+                    )}
+                    <select
                         className="settings-control"
                         style={{ width: "100%", maxWidth: 260 }}
-                        value=""
+                        value={currentAccountId}
                         onChange={(e) => e.target.value && handleSave(line.id, e.target.value, line.amount ?? undefined)}
                         disabled={saving === line.id || accountOptions.length === 0}
                         aria-label={`Select GL account for ${line.description || "line"}`}
                       >
-                        <option value="" disabled selected>
-                          — Select account —
+                        <option value="" disabled>
+                          {hasAccount ? "— Choose a replacement —" : "— Select account —"}
                         </option>
+                        {hasAccount && !currentAccountIsSelectable && (
+                          <option value={currentAccountId} disabled>
+                            {accountCode || "Existing account"} — inactive or unavailable
+                          </option>
+                        )}
                         {accountOptions.map((opt) => (
                           <option key={opt.value} value={opt.value}>
                             {opt.label}
                           </option>
                         ))}
                       </select>
-                    )}
                   </td>
                   <td style={{ padding: "11px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
-                    {hasAccount && (
-                      <>
+                    {hasAccount && currentAccountIsSelectable && (
                         <button
                           type="button"
                           className="btn-quiet"
                           style={{ minHeight: 0, padding: "6px 8px", marginRight: 6 }}
-                          onClick={() => handleCreateRule(line.id, coding!.gl_account_id!, line.description || "")}
+                          onClick={() => handleCreateRule(line.id, currentAccountId, line.description || "")}
                           title="Save as coding rule for future similar lines"
                         >
                           <Sparkles size={14} /> Rule
                         </button>
-                        <button
-                          type="button"
-                          className="btn-quiet"
-                          style={{ minHeight: 0, padding: "6px 8px" }}
-                          onClick={() => {
-                            const newCodings = { ...codings };
-                            delete newCodings[line.id];
-                            setCodings(newCodings);
-                            handleSave(line.id, "", line.amount ?? undefined);
-                          }}
-                          title="Clear this assignment"
-                        >
-                          <X size={14} /> Clear
-                        </button>
-                      </>
                     )}
                     {saving === line.id && <Loader2 className="spin" size={16} style={{ color: "#3F6B4A" }} />}
                   </td>
@@ -273,10 +281,13 @@ export default function GLCodingPanel({
         <div style={{ marginTop: 16, padding: 16, background: "#F8FCF8", border: "1px solid #D6E6D8", borderRadius: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div style={{ fontSize: 13, color: allLinesCoded ? "#477453" : "#B7791F" }}>
-              <strong>{allLinesCoded ? "All lines coded" : `${lineItems.filter((l) => codings[l.id]?.gl_account_id || l.gl_account_id).length} of ${lineItems.length} lines coded`}</strong>
+              <strong>{allLinesCoded ? "All lines coded" : `${codedLineCount} of ${lineItems.length} lines coded`}</strong>
             </div>
             {allLinesCoded && (
-              <span className="badge badge-done" style={{ fontSize: 12 }}>Ready to submit for approval</span>
+              <button type="button" className="btn-primary" onClick={handleApproveCodings} disabled={approving}>
+                {approving ? <Loader2 className="spin" size={15} /> : null}
+                {approving ? "Approving…" : "Approve line coding"}
+              </button>
             )}
           </div>
         </div>
