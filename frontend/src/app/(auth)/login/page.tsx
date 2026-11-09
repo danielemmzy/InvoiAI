@@ -8,6 +8,7 @@ import { z } from "zod";
 import { Loader2, ShieldCheck, Zap } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import MotionMark from "@/components/ui/MotionMark";
+import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -54,6 +55,9 @@ export default function LoginPage() {
             <Link href="/signup">Sign up free</Link>
           </p>
 
+          <GoogleSignInButton />
+          <div className="auth-subtitle" style={{ textAlign: "center", margin: "18px 0" }}>or sign in with email</div>
+
           <form onSubmit={handleSubmit(onSubmit)}>
             <div className="form-group">
               <label className="form-label">Email address</label>
@@ -67,8 +71,12 @@ export default function LoginPage() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Password</label>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <label className="form-label" htmlFor="login-password">Password</label>
+                <Link href="/forgot-password" className="form-hint">Forgot password?</Link>
+              </div>
               <input
+                id="login-password"
                 {...register("password")}
                 type="password"
                 placeholder="••••••••"

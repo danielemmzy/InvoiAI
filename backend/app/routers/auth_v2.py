@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import RedirectResponse
 
 from app.schemas.auth import (
     SignUpRequest,
@@ -14,11 +16,12 @@ from app.schemas.auth import (
     UserProfileResponse,
     VerifyOtpRequest,
 )
-from app.core.auth import get_current_user, AuthUser
+from app.core.auth import get_current_user, AuthUser, validate_access_token
 from app.core.container import get_container
 from app.core.limiter import limiter
 from app.core.config import settings
 from app.core.error_handler import platform_error
+from app.services.auth.google_oauth import build_google_authorization_url
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +238,86 @@ async def login(
     return auth_response
 
 
+@router.get("/google/start")
+@limiter.limit("10/minute")
+async def google_oauth_start(
+    request: Request,
+    redirect_uri: str = Query(..., min_length=1, max_length=2048),
+    state: str = Query(..., min_length=32, max_length=128),
+    code_challenge: str = Query(..., min_length=43, max_length=128),
+):
+    try:
+        authorize_url = build_google_authorization_url(
+            supabase_url=settings.supabase_url,
+            anon_key=settings.supabase_anon_key,
+            redirect_uri=redirect_uri,
+            state=state,
+            code_challenge=code_challenge,
+            allowed_origin=settings.frontend_app_url,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return RedirectResponse(authorize_url, status_code=302)
+
+
+@router.post("/google/exchange", response_model=AuthResponse)
+@limiter.limit("10/minute")
+async def google_oauth_exchange(request: Request, body: dict):
+    code = body.get("code")
+    code_verifier = body.get("code_verifier")
+    if (
+        not isinstance(code, str)
+        or not code
+        or not isinstance(code_verifier, str)
+        or len(code_verifier) < 43
+        or len(code_verifier) > 128
+    ):
+        raise HTTPException(status_code=400, detail="Invalid OAuth callback.")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/token",
+                params={"grant_type": "pkce"},
+                headers={"apikey": settings.supabase_anon_key},
+                json={"auth_code": code, "code_verifier": code_verifier},
+            )
+        if response.status_code >= 400:
+            raise HTTPException(status_code=401, detail="Google sign-in could not be completed.")
+        tokens = response.json()
+        access_token = tokens.get("access_token")
+        refresh_token = tokens.get("refresh_token")
+        if not isinstance(access_token, str) or not isinstance(refresh_token, str):
+            raise HTTPException(status_code=401, detail="Google sign-in could not be completed.")
+
+        user = validate_access_token(access_token)
+        if not user.is_verified:
+            raise HTTPException(
+                status_code=403,
+                detail="Verify your Google email before signing in.",
+            )
+        return AuthResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=str(user.id),
+            email=user.email,
+            plan=user.plan,
+            is_verified=True,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        platform_exc = platform_error(exc)
+        if platform_exc is not None:
+            raise platform_exc from exc
+        logger.warning("google_oauth_exchange_failed", exc_info=True)
+        raise HTTPException(
+            status_code=401,
+            detail="Google sign-in could not be completed.",
+        ) from exc
+
+
 # ============================================================
 # REFRESH
 # ============================================================
@@ -437,6 +520,22 @@ async def reset_password(
             ),
         ) from exc
 
+    token = request.headers.get("authorization", "").removeprefix("Bearer ")
+    if not token:
+        token = request.cookies.get("access_token", "")
+    try:
+        if token:
+            await get_container().auth_service.revoke_sessions(token)
+    except Exception as exc:
+        logger.exception("password_changed_session_revocation_failed")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Your password changed, but we could not revoke existing sessions. "
+                "Please contact support."
+            ),
+        ) from exc
+
     return {
         "message": "Password updated successfully."
     }
@@ -453,10 +552,18 @@ async def logout(
     response: Response,
     user: AuthUser = Depends(get_current_user),
 ):
+    token = request.headers.get("authorization", "").removeprefix("Bearer ")
+    if not token:
+        token = request.cookies.get("access_token", "")
     try:
-        await get_container().auth_service.logout()
-    except Exception:
-        pass
+        if token:
+            await get_container().auth_service.logout(token)
+    except Exception as exc:
+        logger.exception("auth_session_revocation_failed")
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to safely sign out. Please try again.",
+        ) from exc
 
     _clear_auth_cookies(response)
 

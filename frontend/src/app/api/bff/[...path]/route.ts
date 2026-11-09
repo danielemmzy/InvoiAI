@@ -639,14 +639,24 @@ async function handleLogout(
   session: BffSession | null,
 ): Promise<NextResponse> {
   if (session?.accessToken) {
+    let upstream: Response;
     try {
-      await backendRequest(
+      upstream = await backendRequest(
         request,
         AUTH_LOGOUT_PATH,
         session.accessToken,
       );
-    } catch {
-      // Local session cleanup must still happen.
+    } catch (error) {
+      return backendPlatformError(error);
+    }
+    if (!upstream.ok) {
+      const response = bffError(
+        503,
+        "SESSION_REVOCATION_FAILED",
+        "Unable to safely sign out. Please try again.",
+      );
+      clearLegacyCookies(response);
+      return response;
     }
   }
 
@@ -794,9 +804,12 @@ async function proxyAuthenticatedRequest(
     return response;
   }
 
-  return forwardUpstream(
-    upstream,
-  );
+  const response = forwardUpstream(upstream);
+  if (path === RESET_PASSWORD_PATH) {
+    clearSessionCookie(response);
+    clearLegacyCookies(response);
+  }
+  return response;
 }
 
 /* ============================================================

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 from supabase import create_client
 
 from app.core.config import settings
@@ -48,8 +49,18 @@ class AuthRepository:
             refresh_token
         )
 
-    async def logout(self):
-        return self._client().auth.sign_out()
+    async def logout(self, access_token: str):
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{settings.supabase_url.rstrip('/')}/auth/v1/logout",
+                params={"scope": "global"},
+                headers={
+                    "apikey": settings.supabase_anon_key,
+                    "Authorization": f"Bearer {access_token}",
+                },
+            )
+            response.raise_for_status()
+            return response
 
     async def forgot_password(
         self,
@@ -87,6 +98,9 @@ class AuthRepository:
                 "password": password,
             },
         )
+
+    async def revoke_sessions(self, access_token: str):
+        return await self.logout(access_token)
 
     async def admin_confirm_email(self, user_id):
         """Mark the identity provider email confirmed after a valid OTP."""

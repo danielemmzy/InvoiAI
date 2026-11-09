@@ -373,12 +373,17 @@ export function useAuth() {
       return authApi.logout();
     },
 
-    onSettled: () => {
+    onSuccess: () => {
       storeLogout();
 
       queryClient.clear();
 
       router.push("/login");
+    },
+    onError: (error) => {
+      toast.error(
+        getErrorMessage(error, "We couldn't safely end your session. Please try again."),
+      );
     },
   });
 

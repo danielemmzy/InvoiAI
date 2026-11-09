@@ -27,8 +27,11 @@ class AuthService:
     async def refresh(self, refresh_token):
         return await self.auth.refresh(refresh_token)
 
-    async def logout(self):
-        return await self.auth.logout()
+    async def logout(self, access_token: str):
+        return await self.auth.logout(access_token)
+
+    async def revoke_sessions(self, access_token: str):
+        return await self.auth.revoke_sessions(access_token)
 
     async def forgot_password(self, email: str, redirect_to: str):
         return await self.auth.forgot_password(email, redirect_to)

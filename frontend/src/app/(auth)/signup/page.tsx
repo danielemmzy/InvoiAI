@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Loader2, Zap } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import MotionMark from "@/components/ui/MotionMark";
+import GoogleSignInButton from "@/components/auth/GoogleSignInButton";
 
 const E164 = /^\+[1-9]\d{7,14}$/;
 
@@ -75,6 +76,9 @@ export default function SignupPage() {
           </div>
           <h1 className="auth-title">Create your account</h1>
           <p className="auth-subtitle">Already have an account? <Link href="/login">Sign in</Link></p>
+
+          <GoogleSignInButton />
+          <div className="auth-subtitle" style={{ textAlign: "center", margin: "18px 0" }}>or create an account with email</div>
 
           <form
             onSubmit={handleSubmit((data) =>
