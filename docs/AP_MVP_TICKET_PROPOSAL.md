@@ -311,12 +311,12 @@ No Sage work is removed: Sage trial-business evidence, duplicate prevention, ret
 
 **Blocked by:** 5, 7.
 
-- [ ] PDF and image uploads are accepted; unsupported, oversized, and spoofed files show a clear per-file error.
-- [ ] Batch upload returns per-file success/failure and does not fail the whole batch for one bad file.
-- [ ] The original file is immutable and stored privately with a content hash.
-- [ ] Duplicate hashes create a reviewable prompt, not a silent delete or overwrite.
-- [ ] The timeline shows queued, reading, extracting, needs review, failed, and retry.
-- [ ] Failed processing can be retried without re-upload.
+- [x] PDF and image uploads are accepted; unsupported, oversized, and spoofed files show a clear per-file error.
+- [x] Batch upload returns per-file success/failure and does not fail the whole batch for one bad file.
+- [x] The original file is immutable and stored privately with a content hash.
+- [x] Duplicate hashes create a reviewable prompt, not a silent delete or overwrite.
+- [x] The timeline shows queued, reading, extracting, needs review, failed, and retry.
+- [x] Failed processing can be retried without re-upload.
 
 ### 16. Forwarding-email intake with quarantine and scanning
 
