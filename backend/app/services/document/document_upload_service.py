@@ -73,6 +73,7 @@ class DocumentUploadService:
         currency: str,
         source_override: str | None = None,
         external_metadata: dict | None = None,
+        email_auth_failure: dict | None = None,
         allow_duplicate: bool = False,
     ) -> Document:
         """Upload and create a document intake record.
@@ -102,7 +103,7 @@ class DocumentUploadService:
         file_type = inspection.file_type
 
         scan = get_attachment_scanner().scan(content=content, filename=filename)
-        quarantined = not scan.clean
+        quarantined = not scan.clean or bool(email_auth_failure)
 
         file_hash = hashlib.sha256(content).hexdigest()
 
@@ -167,12 +168,13 @@ class DocumentUploadService:
             # document is visible to operators, but its status and failed
             # pipeline stage prevent it from entering OCR.
             metadata["quarantine"] = {
-                "status": scan.status,
+                "status": scan.status if not scan.clean else "email_auth_failed",
                 "signature": scan.signature,
-                "reason": scan.reason,
+                "reason": scan.reason or "Email sender authentication failed.",
+                "email_auth_failure": email_auth_failure,
             }
             warnings.append(
-                "Attachment quarantined: " + (scan.reason or "security policy failed.")
+                "Attachment quarantined: " + (scan.reason or "Email sender authentication failed.")
             )
 
         document = Document(

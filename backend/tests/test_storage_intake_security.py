@@ -263,6 +263,20 @@ async def test_policy_failed_pdf_is_quarantined(upload_service):
     )
 
 
+async def test_email_auth_failure_is_quarantined_before_processing(upload_service):
+    service, documents, storage = upload_service
+    document = await service.upload(
+        org_id=uuid4(), user_id=None, filename="invoice.pdf", content_type="application/pdf",
+        content=PDF_BYTES, industry="general", document_type=DocumentType.INVOICE, currency="GBP",
+        source_override="email_forward", email_auth_failure={"dmarc": "fail"},
+    )
+    assert document.status == DocumentStatus.QUARANTINED
+    assert document.pipeline_stage == PipelineStage.FAILED
+    assert storage.uploads[0]["path"].startswith(f"{QUARANTINE_PREFIX}/")
+    assert document.external_source_data["quarantine"]["email_auth_failure"] == {"dmarc": "fail"}
+    assert documents.created == [document]
+
+
 async def test_spoofed_upload_never_reaches_storage(upload_service):
     service, documents, storage = upload_service
 

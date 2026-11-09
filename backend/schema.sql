@@ -13,6 +13,7 @@
 --   20261011_accounting_tax_code_mappings.sql
 --   20261012_tenant_isolation_rls_and_audit_indexes.sql
 --   20261013_auth_email_otp_verification.sql
+--   20261109_ap_email_intake_rate_limit.sql
 --   20261109_private_documents_bucket.sql
 --   20261109_resumable_business_onboarding.sql
 --   20261110_admin_mfa_recovery.sql
