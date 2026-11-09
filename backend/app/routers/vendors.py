@@ -11,14 +11,36 @@ from app.core.cache_keys import vendors as vendors_cache_key
 from app.core.limiter import limiter
 from app.core.authorization import require_permission
 from app.core.permissions import VIEW_VENDORS, MANAGE_VENDORS
-from app.schemas.vendor import VendorResponse, VendorUpdate
+from app.schemas.vendor import VendorCreate, VendorResponse, VendorUpdate
+from app.models.domain.vendor import Vendor
+from datetime import UTC, datetime
+from uuid import uuid4
 from app.services.vendor.vendor_statement_service import VendorStatementService
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vendors", tags=["Vendors"])
 
 
 def _responses(vendors):
     return [VendorResponse.model_validate(v, from_attributes=True) for v in vendors]
+
+
+async def _audit_vendor_change(*, ctx: OrganizationContext, user: AuthUser, action: str, vendor_id: UUID, outcome: str, fields: list[str] | None = None) -> None:
+    try:
+        from app.services.audit_service import AuditService
+
+        await AuditService().log(
+            org_id=ctx.org_id,
+            user_id=user.id,
+            action=action,
+            resource_type="vendor",
+            resource_id=vendor_id,
+            new_values={"outcome": outcome, "fields": fields or []},
+        )
+    except Exception:
+        logger.exception("Failed to audit vendor change %s for %s", action, vendor_id)
 
 
 @router.get("/preferred/list", response_model=list[VendorResponse])
@@ -98,10 +120,35 @@ async def get_vendor(
     return VendorResponse.model_validate(vendor, from_attributes=True)
 
 
+@router.post("", response_model=VendorResponse, status_code=201)
+async def create_vendor(
+    payload: VendorCreate,
+    user: AuthUser = Depends(get_current_user),
+    ctx: OrganizationContext = Depends(get_org_context),
+    _permission: None = Depends(require_permission(MANAGE_VENDORS)),
+):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Vendor name is required")
+    now = datetime.now(UTC)
+    vendor = Vendor(
+        id=uuid4(), org_id=ctx.org_id, name=name, normalized_name=name.casefold(),
+        created_at=now, updated_at=now, **payload.model_dump(exclude={"name"}),
+    )
+    try:
+        created = await get_container().vendor_service.create_vendor(vendor)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await _audit_vendor_change(ctx=ctx, user=user, action="vendor.created", vendor_id=created.id, outcome="created")
+    await cache.delete_prefix(f"v2:vendors:{ctx.org_id}:")
+    return VendorResponse.model_validate(created, from_attributes=True)
+
+
 @router.patch("/{vendor_id}", response_model=VendorResponse)
 async def update_vendor(
     vendor_id: UUID,
     payload: VendorUpdate,
+    user: AuthUser = Depends(get_current_user),
     ctx: OrganizationContext = Depends(get_org_context),
     _permission: None = Depends(require_permission(MANAGE_VENDORS)),
 ):
@@ -114,12 +161,14 @@ async def update_vendor(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await cache.delete_prefix(f"v2:vendors:{ctx.org_id}:")
+    await _audit_vendor_change(ctx=ctx, user=user, action="vendor.updated", vendor_id=vendor_id, outcome="updated", fields=list(payload.model_dump(exclude_unset=True)))
     return VendorResponse.model_validate(updated, from_attributes=True)
 
 
 @router.delete("/{vendor_id}", status_code=204)
 async def delete_vendor(
     vendor_id: UUID,
+    user: AuthUser = Depends(get_current_user),
     ctx: OrganizationContext = Depends(get_org_context),
     _permission: None = Depends(require_permission(MANAGE_VENDORS)),
 ):
@@ -128,6 +177,7 @@ async def delete_vendor(
     if vendor is None or vendor.org_id != ctx.org_id:
         raise HTTPException(status_code=404, detail="Vendor not found")
     await service.delete_vendor(vendor_id)
+    await _audit_vendor_change(ctx=ctx, user=user, action="vendor.deactivated", vendor_id=vendor_id, outcome="deactivated")
     await cache.delete_prefix(f"v2:vendors:{ctx.org_id}:")
 
 

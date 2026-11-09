@@ -165,6 +165,7 @@ export default function WorkspacePage() {
     ) {
       window.location.replace("/dashboard");
     }
+
   }, [isLoading, workspaces]);
 
   /*

@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import {
   useMutation,
   useQuery,
+  useQueryClient,
 } from "@tanstack/react-query";
 
 import toast from "react-hot-toast";
@@ -95,6 +96,7 @@ export function useWorkspaces() {
  */
 
 export function useCreateWorkspace() {
+  const queryClient = useQueryClient();
   const setActiveWorkspace = useAppStore(
     (state) => state.setActiveWorkspace
   );
@@ -111,6 +113,7 @@ export function useCreateWorkspace() {
     },
 
     onSuccess: (workspace) => {
+      queryClient.clear();
       /*
        * Immediately make the new workspace active.
        */
@@ -157,6 +160,7 @@ export function useCreateWorkspace() {
  */
 
 export function useSwitchWorkspace() {
+  const queryClient = useQueryClient();
   const setActiveWorkspace = useAppStore(
     (state) => state.setActiveWorkspace
   );
@@ -170,6 +174,7 @@ export function useSwitchWorkspace() {
       return;
     }
 
+    queryClient.clear();
     setActiveWorkspace(workspace);
 
     window.location.replace("/dashboard");

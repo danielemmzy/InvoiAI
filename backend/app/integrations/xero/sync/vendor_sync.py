@@ -11,6 +11,8 @@ from app.services.vendor.vendor_sync_service import (
 
 
 class XeroVendorSync(BaseSyncService):
+    resource = "vendor"
+
     """
     Synchronize Xero Contacts (Suppliers).
     """

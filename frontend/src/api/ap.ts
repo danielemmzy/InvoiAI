@@ -144,10 +144,30 @@ export const apAutomationApi = {
 };
 
 export const integrationsApi = {
-  list: async () => (await client.get("/integrations")).data,
+  list: async () => (await client.get<IntegrationConnection[]>("/integrations")).data,
+  syncSuppliers: async (provider: IntegrationProvider) =>
+    (await client.post<SupplierImportResult>(`/integrations/${provider}/sync/vendors`)).data,
   connectQuickBooks: () => "/api/bff/integrations/quickbooks/connect",
   disconnect: async (id: string) => { await client.delete(`/integrations/${id}`); },
 };
+
+export type IntegrationProvider = "quickbooks" | "xero" | "sage";
+export interface SupplierImportResult {
+  total: number;
+  imported: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  errors?: { resource: string; external_id: string | null; error: string }[];
+  completed_at?: string;
+}
+export interface IntegrationConnection {
+  id: string;
+  provider: IntegrationProvider;
+  is_active: boolean;
+  account_name?: string | null;
+  metadata?: Record<string, unknown>;
+}
 
 /* ════════════════════════════════════════════════════════════
    AP Dashboard — backed by app/routers/ap.py and the

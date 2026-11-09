@@ -217,6 +217,8 @@ No Sage work is removed: Sage trial-business evidence, duplicate prevention, ret
 - [ ] Logout and workspace switch clear organization-scoped business data; a second member sees only the active workspace.
 - [ ] Cross-tenant workspace access is denied.
 
+**Implementation gate:** The current `OrganizationService.create_workspace` bootstraps the organization, owner membership, settings, and usage through separate Supabase requests and compensates by deleting the organization if setup fails. This is not a database transaction. Do not mark the atomic-creation acceptance item complete until a transaction-backed database RPC is designed against the deployed core schema and verified; that schema is not fully represented in this checkout.
+
 ---
 
 ## Team, pricing, and billing

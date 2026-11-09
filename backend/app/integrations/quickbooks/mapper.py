@@ -43,6 +43,7 @@ class QuickBooksMapper:
             external_id=str(data["Id"]),
             provider="quickbooks",
             name=data.get("DisplayName"),
+            normalized_name=(data.get("DisplayName") or "").strip().casefold(),
             email=(
                 data.get("PrimaryEmailAddr", {})
                 .get("Address")
@@ -73,6 +74,7 @@ class QuickBooksMapper:
             external_id=str(data["Id"]),
             provider="quickbooks",
             name=data.get("DisplayName"),
+            normalized_name=(data.get("DisplayName") or "").strip().casefold(),
             email=(
                 data.get("PrimaryEmailAddr", {})
                 .get("Address")
@@ -217,4 +219,4 @@ class QuickBooksMapper:
             metadata=data,
         )
 
-    
+

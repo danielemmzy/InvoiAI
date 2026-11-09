@@ -10,7 +10,7 @@ No API request/response models belong here.
 ============================================================
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import Field
 
 from app.core.enum.database import RiskLevel
+from app.core.enum.database import IntegrationProvider
 from app.models.domain.base import TimestampedEntity
 
 
@@ -30,6 +31,14 @@ class Vendor(TimestampedEntity):
     """
 
     org_id: UUID
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    provider: IntegrationProvider | None = None
+
+    external_id: str | None = None
 
     # ---------------------------------------------------------
     # Identity
@@ -91,7 +100,7 @@ class Vendor(TimestampedEntity):
 
     bank_account_changed_at: datetime | None = None
 
-    bank_change_count: int
+    bank_change_count: int = 0
 
     bank_change_pending: bool = False
 
@@ -129,29 +138,29 @@ class Vendor(TimestampedEntity):
     # Statistics
     # ---------------------------------------------------------
 
-    invoice_count: int
+    invoice_count: int = 0
 
-    receipt_count: int
+    receipt_count: int = 0
 
-    credit_note_count: int
+    credit_note_count: int = 0
 
-    po_count: int
+    po_count: int = 0
 
-    total_document_count: int
+    total_document_count: int = 0
 
-    total_spend: Decimal
+    total_spend: Decimal = Decimal("0")
 
-    average_spend: Decimal
+    average_spend: Decimal = Decimal("0")
 
-    median_spend: Decimal
+    median_spend: Decimal = Decimal("0")
 
-    largest_amount: Decimal
+    largest_amount: Decimal = Decimal("0")
 
-    smallest_amount: Decimal
+    smallest_amount: Decimal = Decimal("0")
 
-    stddev_spend: Decimal
+    stddev_spend: Decimal = Decimal("0")
 
-    price_volatility: Decimal
+    price_volatility: Decimal = Decimal("0")
 
     first_seen: datetime | None = None
 
@@ -171,31 +180,31 @@ class Vendor(TimestampedEntity):
     # Risk
     # ---------------------------------------------------------
 
-    duplicate_count: int
+    duplicate_count: int = 0
 
-    fraud_flags: int
+    fraud_flags: int = 0
 
-    anomaly_count: int
+    anomaly_count: int = 0
 
-    rejection_count: int
+    rejection_count: int = 0
 
     monthly_spend_trend: JsonDict = Field(default_factory=dict)
 
     spend_category_breakdown: JsonDict = Field(default_factory=dict)
 
-    risk_score: int
+    risk_score: int = 0
 
-    risk_level: RiskLevel
+    risk_level: RiskLevel = RiskLevel.LOW
 
     # ---------------------------------------------------------
     # Status
     # ---------------------------------------------------------
 
-    is_verified: bool
+    is_verified: bool = False
 
-    is_preferred: bool
+    is_preferred: bool = False
 
-    is_blocked: bool
+    is_blocked: bool = False
 
     blocked_reason: str | None = None
 
@@ -224,6 +233,12 @@ class Vendor(TimestampedEntity):
     # ---------------------------------------------------------
 
     external_ids: JsonDict = Field(default_factory=dict)
+
+    is_active: bool = True
+
+    synced_at: datetime | None = None
+
+    last_modified_external: datetime | None = None
 
     tags: list[str] = Field(default_factory=list)
 

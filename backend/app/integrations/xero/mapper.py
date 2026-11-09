@@ -61,6 +61,7 @@ class XeroMapper(BaseIntegrationMapper):
                 data,
                 "Name",
             ),
+            normalized_name=(self.optional(data, "Name", "") or "").strip().casefold(),
             email=self.optional(
                 data,
                 "EmailAddress",

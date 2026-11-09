@@ -4,6 +4,7 @@ import {
   encryptSession,
   getBffSessionCookieName,
 } from "@/lib/bff-session";
+import { authLandingPath } from "@/lib/auth-routing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -72,11 +73,26 @@ export async function GET(request: NextRequest) {
       return finish(request, "/login?reason=google-failed");
     }
 
-    const destination = auth.mfa_enrollment_required === true
-      ? "/mfa?mode=enroll"
-      : auth.mfa_challenge_required === true
-        ? "/mfa?step_up=1"
-        : "/dashboard";
+    let hasWorkspace = true;
+    if (auth.mfa_enrollment_required !== true && auth.mfa_challenge_required !== true) {
+      try {
+        const workspaceResponse = await fetch(`${BACKEND_API_URL}/api/v2/workspaces`, {
+          headers: { Authorization: `Bearer ${auth.access_token}`, Accept: "application/json" },
+          cache: "no-store",
+        });
+        if (workspaceResponse.ok) {
+          const workspaces: unknown = await workspaceResponse.json();
+          if (Array.isArray(workspaces)) hasWorkspace = workspaces.length > 0;
+        }
+      } catch {
+        // Keep the existing-user dashboard as the safe fallback during a temporary API outage.
+      }
+    }
+    const destination = authLandingPath(
+      auth.mfa_enrollment_required === true,
+      auth.mfa_challenge_required === true,
+      hasWorkspace,
+    );
     const response = finish(request, destination);
     response.cookies.set(getBffSessionCookieName(), encryptSession({
       accessToken: auth.access_token,

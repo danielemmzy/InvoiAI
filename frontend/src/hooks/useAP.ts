@@ -78,6 +78,19 @@ export function useIntegrations() {
   return useQuery({ queryKey: key, queryFn: integrationsApi.list, enabled, staleTime: 30_000 });
 }
 
+export function useSyncSuppliers() {
+  const qc = useQueryClient();
+  const { ws } = useWorkspaceKey();
+  return useMutation({
+    mutationFn: integrationsApi.syncSuppliers,
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ["integrations", ws] });
+      toast.success(`Suppliers: ${result.imported} added, ${result.updated} updated, ${result.failed} failed.`);
+    },
+    onError: (e) => toast.error(getErrorMessage(e, "Supplier import failed.")),
+  });
+}
+
 /* ── AP dashboard: summary, trends, invoices, aging, vendor statements ── */
 
 export function useAPSummary(filters?: apDashboardApi.SummaryFilters) {

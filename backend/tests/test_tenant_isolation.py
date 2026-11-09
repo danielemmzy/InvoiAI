@@ -9,6 +9,7 @@ safe 404 instead of leaking record existence.
 
 from __future__ import annotations
 
+from time import time
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -54,6 +55,8 @@ def tenant_client(fake_db, monkeypatch):
         email="isolation@example.com",
         org_id=ORG_A,
         role=OrgRole.OWNER,
+        aal="aal2",
+        mfa_verified_at=int(time()),
     )
 
     previous = dict(app.dependency_overrides)

@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 const PROTECTED = [
   "/dashboard",
   "/workspace",
+  "/onboarding",
 ];
 
 const SESSION_COOKIE =
@@ -44,5 +45,6 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/workspace/:path*",
+    "/onboarding/:path*",
   ],
 };

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 WorkspaceType = Literal["personal", "business"]
 
@@ -26,6 +26,16 @@ class WorkspaceCreate(BaseModel):
     # scripts) don't break; the frontend makes it required in the UI
     # for business signups.
     company_size: CompanySize | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_market_currency(cls, values):
+        if not isinstance(values, dict) or "currency" in values:
+            return values
+        values = dict(values)
+        country = str(values.get("country") or "").upper()
+        values["currency"] = {"GB": "GBP", "US": "USD", "NG": "NGN"}.get(country, "USD")
+        return values
 
 
 class WorkspaceSummary(BaseModel):

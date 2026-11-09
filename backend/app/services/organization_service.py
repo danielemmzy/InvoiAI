@@ -48,6 +48,8 @@ from app.repositories.organization.usage_repository import (
 
 from app.core.permissions import get_permissions
 from app.schemas.workspace import WorkspaceSummary
+from app.schemas.onboarding import OnboardingComplete
+from app.repositories.organization.onboarding_draft_repository import OnboardingDraftRepository
 from app.core.enum.database import OrgRole, PlanType
 from app.core.plan import document_limit_for, supports_feature
 from app.core.features import Features
@@ -72,6 +74,39 @@ class OrganizationService:
         self.members = MemberRepository()
 
         self.usage = UsageRepository()
+        self.onboarding_drafts = OnboardingDraftRepository()
+
+    async def complete_onboarding(self, *, user: AuthUser, data: OnboardingComplete) -> WorkspaceSummary:
+        draft = self.onboarding_drafts.get(user.id)
+        if draft and draft.get("completed") and draft.get("workspace_id"):
+            existing = await self.organizations.get_organization(UUID(str(draft["workspace_id"])))
+            if existing and str(existing.created_by) == str(user.id):
+                membership = await self.members.get_org_member(existing.id, user.id)
+                if membership is None or not membership.is_active or membership.role != OrgRole.OWNER.value:
+                    raise HTTPException(status_code=403, detail="Workspace is not available to this user.")
+                return WorkspaceSummary(
+                    id=existing.id, name=existing.name, slug=existing.slug, type="business",
+                    role=OrgRole.OWNER.value, plan=existing.plan, currency=existing.currency,
+                    created_at=existing.created_at,
+                )
+        if draft and draft.get("completed"):
+            raise HTTPException(status_code=409, detail="The completed workspace is no longer available.")
+
+        self.onboarding_drafts.save(user.id, step=6, data=data.model_dump())
+        # The row-level RPC reserves one stable workspace ID for concurrent
+        # retries. The following organization bootstrap still uses separate
+        # Supabase calls with compensation; it is not a DB transaction.
+        workspace_id = self.onboarding_drafts.claim_workspace_id(user.id)
+        workspace = await self.create_workspace(
+            user=user, workspace_type="business", name=data.name,
+            currency=data.currency.upper(), country=data.country.upper(),
+            company_size=data.company_size, workspace_id=workspace_id,
+            industry=data.industry, business_type=data.business_type,
+            monthly_invoice_volume=data.monthly_invoice_volume,
+            accounting_software=data.accounting_software,
+        )
+        self.onboarding_drafts.mark_completed(user.id, workspace_id)
+        return workspace
 
     # ======================================================
     # Internal helpers
@@ -347,6 +382,11 @@ class OrganizationService:
         currency: str,
         country: str | None,
         company_size: str | None = None,
+        workspace_id: UUID | None = None,
+        industry: str | None = None,
+        business_type: str | None = None,
+        monthly_invoice_volume: str | None = None,
+        accounting_software: str | None = None,
     ) -> WorkspaceSummary:
         workspace_type = workspace_type.lower()
         currency = str(currency or "USD").strip().upper()
@@ -403,7 +443,7 @@ class OrganizationService:
         # Organization
         # --------------------------------------------------
 
-        org_id = uuid4()
+        org_id = workspace_id or uuid4()
 
         slug = (
             f"{self._slugify(display_name)}-"
@@ -428,23 +468,31 @@ class OrganizationService:
             ),
         }
 
-        organization = await self.organizations.create_organization(
-            {
+        organization = await self.organizations.get_organization(org_id) if workspace_id else None
+        organization_was_existing = organization is not None
+        if organization and str(organization.created_by) != str(user.id):
+            raise HTTPException(status_code=403, detail="Workspace is not available to this user.")
+        membership = None
+        if organization_was_existing:
+            membership = await self.members.get_org_member(org_id, user.id)
+            if membership and membership.role != OrgRole.OWNER.value:
+                raise HTTPException(status_code=403, detail="Workspace is not available to this user.")
+        if organization is None:
+            organization = await self.organizations.create_organization({
                 "id": org_id,
                 "name": display_name,
                 "slug": slug,
                 "plan": plan.value,
-                "industry": (
-                    None
-                    if workspace_type == "personal"
-                    else "general"
-                ),
+                "industry": None if workspace_type == "personal" else (industry or "general"),
                 "company_size": (
                     company_size
                     if workspace_type == "business"
                     else None
                 ),
                 "country": country,
+                "business_type": business_type if workspace_type == "business" else None,
+                "monthly_invoice_volume": monthly_invoice_volume if workspace_type == "business" else None,
+                "accounting_software": accounting_software if workspace_type == "business" else None,
                 "currency": currency,
                 "tax_id": None,
                 "logo_url": None,
@@ -455,8 +503,7 @@ class OrganizationService:
                 ),
                 "features": features,
                 "created_by": user.id,
-            }
-        )
+            })
 
         if organization is None:
             raise HTTPException(
@@ -469,15 +516,23 @@ class OrganizationService:
         # --------------------------------------------------
 
         try:
-            await self.members.create_membership(
-                {
-                    "org_id": org_id,
-                    "user_id": user.id,
-                    "role": OrgRole.OWNER.value,
-                    "is_active": True,
-                    "joined_at": datetime.now(UTC),
-                }
-            )
+            if membership is None:
+                membership = await self.members.get_org_member(org_id, user.id)
+            if membership is None:
+                await self.members.create_membership(
+                    {
+                        "org_id": org_id,
+                        "user_id": user.id,
+                        "role": OrgRole.OWNER.value,
+                        "is_active": True,
+                        "joined_at": datetime.now(UTC),
+                    }
+                )
+            elif not membership.is_active:
+                await self.members.update_membership(
+                    membership.id,
+                    {"is_active": True, "joined_at": datetime.now(UTC)},
+                )
 
             month = self.usage.current_month()
 
@@ -498,7 +553,7 @@ class OrganizationService:
                         "default_language": "en",
                         "auto_analyze": True,
                         "ocr_language": "en",
-                        "default_industry": "general",
+                        "default_industry": industry or "general",
                         "supported_document_types": [
                             "invoice",
                             "receipt",

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PROTECTED = ["/dashboard", "/workspace"];
+const PROTECTED = ["/dashboard", "/workspace", "/onboarding"];
 const AUTH_ONLY = ["/login", "/signup"];
 const SESSION_COOKIE = "invoiai_bff_session";
 
@@ -27,6 +27,7 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/workspace/:path*",
+    "/onboarding/:path*",
     "/login",
     "/signup",
   ],

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, Copy, KeyRound, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 import { authApi, type MfaFactor } from "@/api/auth";
@@ -17,7 +17,7 @@ type Enrollment = {
   uri: string | null;
 };
 
-export default function MfaPage() {
+function MfaPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [factors, setFactors] = useState<MfaFactor[]>([]);
@@ -171,7 +171,7 @@ export default function MfaPage() {
       sessionStorage.removeItem("invoiai:mfa-return-to");
       const next = mfaReturn && mfaReturn.startsWith("/") && !mfaReturn.startsWith("//") && !mfaReturn.startsWith("/mfa")
         ? mfaReturn
-        : selected ? "/dashboard" : "/workspace";
+        : selected ? "/dashboard" : "/onboarding";
       router.replace(next);
     } catch (reason) {
       setError(getErrorMessage(reason, "Authenticator verified, but we could not load your workspace."));
@@ -295,6 +295,14 @@ export default function MfaPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+export default function MfaPage() {
+  return (
+    <Suspense fallback={<p role="status">Loading security settings…</p>}>
+      <MfaPageContent />
+    </Suspense>
   );
 }
 
