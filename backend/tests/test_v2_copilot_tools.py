@@ -3,7 +3,7 @@ import pytest
 from uuid import uuid4
 from types import SimpleNamespace
 
-from app2.services.ai.tool_executor_service import ToolExecutor
+from app.services.ai.tool_executor_service import ToolExecutor
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
 import asyncio
-from app2.core.redis import get_redis
+from app.core.redis import get_redis
 
 
 async def main():

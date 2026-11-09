@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from app.core.container import get_container
-from app.workers.ap_matching_worker import APMatchingWorker
-from app.workers.ap_coding_worker import APCodingWorker
-from app.workers.bill_sync_worker import BillSyncWorker
+from app.services.ap.recovery_service import APRecoveryService
 from app.workers.chart_of_accounts_sync_worker import ChartOfAccountsSyncWorker
+from app.workers.scheduled_payment_worker import ScheduledPaymentWorker
 from app.scheduler.cron import CronScheduler
 
 
@@ -63,23 +62,20 @@ async def _finance():
     return await get_container().finance_worker.run_pending()
 
 
-async def _ap_matching():
-    return await APMatchingWorker().run_pending()
+async def _ap_recovery():
+    return await APRecoveryService().run()
 
-
-async def _ap_coding():
-    return await APCodingWorker().run_pending()
-
-
-async def _bill_sync():
-    return await BillSyncWorker().run_pending()
 
 
 async def _coa_sync():
     return await ChartOfAccountsSyncWorker().run()
 
 
-cron.register(name="ocr-processing", expression="*/2 * * * *", worker=_ocr)
+async def _scheduled_payments():
+    return await ScheduledPaymentWorker().run()
+
+
+cron.register(name="ocr-processing", expression="* * * * *", worker=_ocr)
 cron.register(name="vendor-matching", expression="*/5 * * * *", worker=_vendor)
 cron.register(name="analysis", expression="*/10 * * * *", worker=_analysis)
 cron.register(name="embedding", expression="*/15 * * * *", worker=_embedding)
@@ -92,7 +88,7 @@ cron.register(name="approval-escalation", expression="*/15 * * * *", worker=_esc
 cron.register(name="insights", expression="0 */6 * * *", worker=_insights)
 cron.register(name="token-refresh", expression="0 * * * *", worker=_token_refresh)
 cron.register(name="finance-maintenance", expression="5 0 * * *", worker=_finance)
-cron.register(name="ap-matching", expression="*/2 * * * *", worker=_ap_matching)
-cron.register(name="ap-coding", expression="*/2 * * * *", worker=_ap_coding)
-cron.register(name="ap-bill-sync", expression="*/5 * * * *", worker=_bill_sync)
 cron.register(name="quickbooks-coa-sync", expression="17 */6 * * *", worker=_coa_sync)
+cron.register(name="ap-recovery", expression="* * * * *", worker=_ap_recovery)
+
+cron.register(name="scheduled-payment-release", expression="*/5 * * * *", worker=_scheduled_payments)

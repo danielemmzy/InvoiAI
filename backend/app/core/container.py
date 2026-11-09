@@ -9,7 +9,9 @@ from functools import cached_property
 from typing import Any
 
 from app.core.supabase import get_supabase
-from app.integrations.google.google_document_ai_service import GoogleDocumentAIService
+from app.integrations.openai.openai_ocr_service import (
+    OpenAIOCRService,
+)
 from app.integrations.quickbooks.sync_service import QuickBooksSyncService
 from app.integrations.xero.sync_service import XeroSyncService
 from app.repositories.ai.embedding_repository import EmbeddingRepository
@@ -19,6 +21,7 @@ from app.repositories.approval.workflow_repository import ApprovalWorkflowReposi
 from app.repositories.audit.audit_repository import AuditRepository
 from app.repositories.document.analysis_repository import AnalysisRepository
 from app.repositories.document.document_repository import DocumentRepository
+from app.repositories.document.ocr_repository import OCRRepository
 from app.repositories.document.purchase_order_repository import PurchaseOrderRepository
 from app.repositories.document.vendor_repository import VendorRepository
 from app.repositories.document.payment_repository import PaymentRepository
@@ -53,6 +56,8 @@ from app.services.notification.provider.push_provider import PushNotificationPro
 from app.services.notification.provider.sms_provider import SMSNotificationProvider
 from app.services.notification.queue.database_queue import DatabaseNotificationQueue
 from app.services.ocr.ocr_service import OCRService
+from app.services.extraction.extraction_engine import ExtractionEngine
+from app.services.extraction.extraction_service import ExtractionService
 from app.services.storage.storage import StorageService
 from app.services.validation_service import ValidationService
 from app.services.document.document_service import DocumentService
@@ -70,6 +75,7 @@ from app.services.verification.po_match import PurchaseOrderMatch
 from app.services.verification.vendor_check import VendorCheck
 
 from app.services.auth.auth_service import AuthService
+from app.services.auth.verification_service import EmailVerificationService
 from app.services.billing.stripe_service import StripeBillingService
 from app.services.billing.stripe_event_processor import StripeEventProcessor
 from app.repositories.billing.stripe_event_repository import StripeEventRepository
@@ -106,8 +112,22 @@ class Container:
         return get_supabase()
 
     @cached_property
+    def approval_authority_service(self):
+        from app.services.approval.authority_service import ApprovalAuthorityService
+        return ApprovalAuthorityService()
+
+    @cached_property
+    def sod_service(self):
+        from app.services.approval.sod_service import SegregationOfDutiesService
+        return SegregationOfDutiesService(db=self.db)
+
+    @cached_property
     def document_repository(self):
         return DocumentRepository()
+
+    @cached_property
+    def ocr_repository(self):
+        return OCRRepository()
 
     @cached_property
     def document_service(self):
@@ -125,6 +145,26 @@ class Container:
     @cached_property
     def analysis_repository(self):
         return AnalysisRepository()
+
+    @cached_property
+    def ap_dashboard_repository(self):
+        from app.repositories.ap.dashboard_repository import APDashboardRepository
+        return APDashboardRepository(db=self.db)
+
+    @cached_property
+    def fx_rate_repository(self):
+        from app.repositories.fx.rate_repository import FXRateRepository
+        return FXRateRepository(db=self.db)
+
+    @cached_property
+    def fx_service(self):
+        from app.services.fx.fx_service import FXService
+        return FXService(repository=self.fx_rate_repository)
+
+    @cached_property
+    def ap_dashboard_service(self):
+        from app.services.ap.dashboard_service import APDashboardService
+        return APDashboardService(repository=self.ap_dashboard_repository, fx_service=self.fx_service)
 
     @cached_property
     def purchase_order_repository(self):
@@ -145,15 +185,25 @@ class Container:
 
     @cached_property
     def storage_service(self):
-        return StorageService(client=self.db)
+        return StorageService(
+            client=self.db
+        )
 
     @cached_property
-    def google_document_ai(self):
-        return GoogleDocumentAIService()
+    def openai_ocr(self):
+        return OpenAIOCRService()
+
+    @cached_property
+    def extraction_service(self):
+        return ExtractionService(
+            engine=ExtractionEngine(),
+        )
 
     @cached_property
     def validation_service(self):
-        return ValidationService(math_check=MathCheck())
+        return ValidationService(
+            math_check=MathCheck()
+        )
 
     @cached_property
     def verification_engine(self):
@@ -184,6 +234,7 @@ class Container:
         return AnalysisService(
             repository=self.analysis_repository,
             document_repository=self.document_repository,
+            ocr_repository=self.ocr_repository,
             purchase_order_repository=self.purchase_order_repository,
             verification_engine=self.verification_engine,
             embedding_worker=self.embedding_worker,
@@ -192,21 +243,28 @@ class Container:
 
     @cached_property
     def analysis_worker(self):
-        return AnalysisWorker(analysis_service=self.analysis_service, document_repository=self.document_repository)
+        return AnalysisWorker(
+            analysis_service=self.analysis_service,
+            document_repository=self.document_repository,
+        )
 
     @cached_property
     def ocr_service(self):
         return OCRService(
             document_repository=self.document_repository,
+            ocr_repository=self.ocr_repository,
             storage_service=self.storage_service,
-            provider=self.google_document_ai,
+            provider=self.openai_ocr,
             analysis_worker=self.analysis_worker,
+            extraction_service=self.extraction_service,
         )
 
     @cached_property
     def ocr_worker(self):
-        return OCRWorker(ocr_service=self.ocr_service, document_repository=self.document_repository)
-
+        return OCRWorker(
+            ocr_service=self.ocr_service,
+            document_repository=self.document_repository,
+        )
     @cached_property
     def vendor_memory_service(self):
         return VendorMemoryService(repository=self.vendor_repository)
@@ -393,6 +451,7 @@ class Container:
             workflow_repository=self.approval_workflow_repository,
             step_repository=self.approval_step_repository,
             history_repository=self.approval_history_repository,
+            audit_service=self.audit_service,
         )
 
     @cached_property
@@ -497,6 +556,12 @@ class Container:
                 usage_repository=UsageRepository(),
                 organization_repository=OrganizationRepository(),
             )
+        )
+
+    @cached_property
+    def email_verification_service(self):
+        return EmailVerificationService(
+            auth_repository=self.auth_service.auth,
         )
 
     @cached_property

@@ -14,7 +14,11 @@ def test_v2_api_surface_is_registered():
 def test_redis_is_used_for_rate_limiting_and_cache():
     limiter = (ROOT / "app" / "core" / "limiter.py").read_text()
     redis = (ROOT / "app" / "core" / "redis.py").read_text()
-    assert "storage_uri=settings.redis_url" in limiter
+    # Production rate limits must be shared across workers; local and test
+    # runs deliberately use an in-process store so the suite needs no Redis.
+    assert 'settings.environment != "production"' in limiter
+    assert "settings.redis_url" in limiter
+    assert '"memory://"' in limiter
     assert "settings.redis_max_connections" in redis
 
 

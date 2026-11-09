@@ -12,6 +12,7 @@ from app.core.limiter import limiter
 from app.core.authorization import require_permission
 from app.core.permissions import VIEW_VENDORS, MANAGE_VENDORS
 from app.schemas.vendor import VendorResponse, VendorUpdate
+from app.services.vendor.vendor_statement_service import VendorStatementService
 
 router = APIRouter(prefix="/vendors", tags=["Vendors"])
 
@@ -42,12 +43,16 @@ async def list_vendors(
     response: Response,
     request: Request,
     query: str | None = None,
+    risk_level: str | None = None,
     limit: int = 50,
     ctx: OrganizationContext = Depends(get_org_context),
     _permission: None = Depends(require_permission(VIEW_VENDORS)),
 ):
     limit = min(max(limit, 1), 100)
-    key = vendors_cache_key(str(ctx.org_id), query, limit)
+    normalized_risk = risk_level.lower() if risk_level else None
+    if normalized_risk and normalized_risk not in {"low", "medium", "high", "critical"}:
+        raise HTTPException(status_code=422, detail="risk_level must be low, medium, high, or critical")
+    key = vendors_cache_key(str(ctx.org_id), query, limit, normalized_risk)
     cached = await cache.get(key)
     if cached is not None:
         return [VendorResponse.model_validate(item) for item in cached]
@@ -58,6 +63,8 @@ async def list_vendors(
         if query
         else await service.list_for_org(ctx.org_id, limit=limit)
     )
+    if normalized_risk:
+        vendors = [vendor for vendor in vendors if str(vendor.risk_level).lower() == normalized_risk]
     result = _responses(vendors)
     await cache.set(
         key=key,
@@ -65,6 +72,18 @@ async def list_vendors(
         ttl=120,
     )
     return result
+
+
+@router.get("/{vendor_id}/statement")
+async def vendor_statement(
+    vendor_id: UUID,
+    ctx: OrganizationContext = Depends(get_org_context),
+    _permission: None = Depends(require_permission(VIEW_VENDORS)),
+):
+    try:
+        return await VendorStatementService().get(ctx.org_id, vendor_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{vendor_id}", response_model=VendorResponse)

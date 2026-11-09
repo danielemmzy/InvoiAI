@@ -7,6 +7,7 @@ import { CheckCircle2, XCircle, Clock3, ShieldAlert, ExternalLink, Loader2 } fro
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { PageLoading, PageError, EmptyState } from "@/components/ui/PageState";
 import { usePendingApprovals, useDecideApproval } from "@/hooks/useApprovalsInsightsPO";
+import { useClaimApprovalStep } from "@/hooks/useAP";
 import type { ApprovalQueueItem } from "@/api/approvals";
 
 function money(n: number, currency = "USD") {
@@ -27,6 +28,7 @@ export default function ApprovalsPage() {
   const [tab, setTab] = useState<"pending" | "overdue">("pending");
   const pending = usePendingApprovals();
   const decide = useDecideApproval();
+  const claim = useClaimApprovalStep();
   const [comment, setComment] = useState<Record<string, string>>({});
 
   const query = pending; // overdue reuses the same list endpoint filtered client-side for now
@@ -61,7 +63,14 @@ export default function ApprovalsPage() {
       ) : (
         <div className="approval-list">
           {items.map((item) => (
-            <ApprovalCard key={item.step_id} item={item} decide={decide} comment={comment[item.step_id] ?? ""} setComment={(v) => setComment((c) => ({ ...c, [item.step_id]: v }))} />
+            <ApprovalCard
+              key={item.step_id}
+              item={item}
+              decide={decide}
+              claim={claim}
+              comment={comment[item.step_id] ?? ""}
+              setComment={(v) => setComment((c) => ({ ...c, [item.step_id]: v }))}
+            />
           ))}
         </div>
       )}
@@ -70,15 +79,20 @@ export default function ApprovalsPage() {
 }
 
 function ApprovalCard({
-  item, decide, comment, setComment,
+  item, decide, claim, comment, setComment,
 }: {
   item: ApprovalQueueItem;
   decide: ReturnType<typeof useDecideApproval>;
+  claim: ReturnType<typeof useClaimApprovalStep>;
   comment: string;
   setComment: (v: string) => void;
 }) {
   const tone = item.risk_level === "high" ? "danger" : item.risk_level === "medium" ? "warn" : item.risk_level === "low" ? "good" : "neutral";
   const isDeciding = decide.isPending && decide.variables?.stepId === item.step_id;
+  const isClaiming = claim.isPending && claim.variables === item.step_id;
+  const isGroupStep = !!item.approver_group_id;
+  const canDecide = !isGroupStep || item.claimed_by != null;
+  const isClaimed = isGroupStep && item.claimed_by != null;
 
   return (
     <div className={`approval-card${item.is_urgent ? " urgent" : ""}`}>
@@ -115,10 +129,23 @@ function ApprovalCard({
         <Link href={`/dashboard/document/${item.document_id}`} className="btn-secondary">
           <ExternalLink size={13} /> Review document
         </Link>
+        {isGroupStep && !isClaimed && (
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={isClaiming}
+            onClick={() => claim.mutate(item.step_id)}
+          >
+            {isClaiming ? <Loader2 size={14} className="spin" /> : null} Claim task
+          </button>
+        )}
+        {isGroupStep && isClaimed && (
+          <span className="status-pill good">Claimed</span>
+        )}
         <button
           type="button"
           className="btn-danger-outline"
-          disabled={isDeciding}
+          disabled={isDeciding || !canDecide}
           onClick={() => decide.mutate({ stepId: item.step_id, decision: "rejected", comment: comment || undefined })}
         >
           <XCircle size={14} /> Reject
@@ -126,7 +153,7 @@ function ApprovalCard({
         <button
           type="button"
           className="btn-primary"
-          disabled={isDeciding}
+          disabled={isDeciding || !canDecide}
           onClick={() => decide.mutate({ stepId: item.step_id, decision: "approved", comment: comment || undefined })}
         >
           {isDeciding ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />} Approve

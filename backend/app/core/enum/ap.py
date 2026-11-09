@@ -66,3 +66,54 @@ class APDimensionType(StrEnum):
     LOCATION = "location"
     CLASS = "class"
     CUSTOM = "custom"
+
+class ApprovalRuleScope(StrEnum):
+    BILL = "bill"
+    PAYMENT = "payment"
+
+class ApproverType(StrEnum):
+    USER = "user"
+    ROLE = "role"
+    GROUP = "group"
+
+class PaymentAuthorizationStatus(StrEnum):
+    AUTHORIZED = "authorized"
+    BLOCKED = "blocked"
+    NEEDS_REVIEW = "needs_review"
+    OVERRIDE_REQUIRED = "override_required"
+
+class ApprovalExecutionMode(StrEnum):
+    SEQUENTIAL = "sequential"
+    PARALLEL = "parallel"
+    ANY_ONE = "any_one"
+    GROUP = "group"
+
+class ApprovalWorkflowType(StrEnum):
+    BILL = "bill"
+    PAYMENT = "payment"
+
+class PaymentInstructionStatus(StrEnum):
+    REQUESTED = "requested"
+    SCHEDULED = "scheduled"
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED_FOR_PAYMENT = "approved_for_payment"
+    PENDING_AUTHORIZATION = "pending_authorization"
+    AUTHORIZED = "authorized"
+    BLOCKED = "blocked"
+    PROCESSING = "processing"
+    PAID = "paid"
+    FAILED = "failed"
+    RETURNED = "returned"
+    CANCELLED = "cancelled"
+    RECONCILED = "reconciled"
+
+class VendorDocumentRequestType(StrEnum):
+    W9 = "w9"
+    BANK_VERIFICATION = "bank_verification"
+
+class VendorDocumentRequestStatus(StrEnum):
+    PENDING = "pending"
+    SUBMITTED = "submitted"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+    EXPIRED = "expired"

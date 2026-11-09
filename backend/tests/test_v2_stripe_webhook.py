@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from app2.services.billing.stripe_event_processor import StripeEventProcessor
+from app.services.billing.stripe_event_processor import StripeEventProcessor
 
 
 class FakeEvents:

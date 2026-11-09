@@ -1,20 +1,29 @@
 "use client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { documentsApi, exportApi } from "@/api/documents";
+import { getErrorMessage } from "@/api/client";
 import { useAppStore } from "@/store/useAppStore";
 
-export function useDocuments(industryFilter?: string) {
+export function useDocuments(industryFilter?: string, query?: string) {
   const [offset, setOffset] = useState(0);
   const limit = 20;
   const ws = useAppStore((s) => s.activeWorkspace?.id);
 
+  useEffect(() => {
+    setOffset(0);
+  }, [industryFilter, query]);
+
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["documents", ws, offset, industryFilter],
-    queryFn: () => documentsApi.getHistory(offset, limit, industryFilter),
+    queryKey: ["documents", ws, offset, industryFilter, query],
+    queryFn: () => documentsApi.getHistory(offset, limit, industryFilter, query),
     enabled: !!ws,
-    staleTime: 30 * 1000,
+    staleTime: 0,
+    refetchInterval: (query) => {
+      const docs = query.state.data?.documents ?? [];
+      return docs.some((doc) => ["pending", "processing"].includes(String(doc.capture_status))) ? 1500 : false;
+    },
   });
 
   return {
@@ -51,7 +60,7 @@ export function useDeleteDocument() {
       queryClient.invalidateQueries({ queryKey: ["documents", ws] });
       toast.success("Document deleted.");
     },
-    onError: () => toast.error("Failed to delete document."),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Failed to delete document.")),
   });
 }
 
@@ -71,13 +80,13 @@ export function useExport() {
   const excelMutation = useMutation({
     mutationFn: (id: string) => exportApi.downloadExcel(id),
     onSuccess: () => toast.success("Excel downloaded!"),
-    onError: () => toast.error("Excel download failed."),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "Excel download failed.")),
   });
 
   const csvMutation = useMutation({
     mutationFn: (id: string) => exportApi.downloadCsv(id),
     onSuccess: () => toast.success("CSV downloaded!"),
-    onError: () => toast.error("CSV download failed."),
+    onError: (error: unknown) => toast.error(getErrorMessage(error, "CSV download failed.")),
   });
 
   const sheetsMutation = useMutation({
@@ -103,10 +112,21 @@ export function useExport() {
   };
 }
 
-function getErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "response" in error) {
-    const e = error as { response?: { data?: { detail?: string } } };
-    return e.response?.data?.detail || "";
-  }
-  return "";
+export function useDocumentIntelligence(documentId: string | null) {
+  const ws = useAppStore((s) => s.activeWorkspace?.id);
+  return useQuery({
+    queryKey: ["document-intelligence", ws, documentId],
+    queryFn: () => documentsApi.getIntelligence(documentId!),
+    enabled: !!ws && !!documentId,
+    refetchInterval: (query) => {
+      const step = query.state.data?.document?.processing_step;
+      const ready = query.state.data?.ready;
+      const intelligenceStatus = query.state.data?.document?.intelligence_status;
+      const captureStatus = query.state.data?.document?.capture_status;
+      if (captureStatus === "pending" || captureStatus === "processing") return 1200;
+      if (ready || intelligenceStatus === "not_requested" || intelligenceStatus === "complete" || intelligenceStatus === "failed" || step === "capture_complete" || step === "ap_ready") return false;
+      return 1500;
+    },
+    staleTime: 0,
+  });
 }

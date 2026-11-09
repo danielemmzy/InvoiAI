@@ -62,12 +62,12 @@ class VendorCheck:
             return VerificationResult(
                 passed=False,
                 score=0,
-                confidence=100,
-                summary="Vendor not found.",
-                reasons=["Vendor does not exist."],
+                confidence=0,
+                summary="Vendor intelligence is unavailable.",
+                reasons=["Vendor record could not be resolved for this document."],
                 positives=[],
-                warnings=[],
-                metadata={},
+                warnings=["Vendor checks could not be completed."],
+                metadata={"available": False},
             )
 
         # -----------------------------------------------------
@@ -161,6 +161,7 @@ class VendorCheck:
         # -----------------------------------------------------
 
         metadata = {
+            "available": True,
             "vendor_id": vendor.id,
             "risk_score": vendor.risk_score,
             "risk_level": vendor.risk_level,

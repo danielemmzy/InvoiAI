@@ -25,6 +25,10 @@ from app.models.domain.base import DomainModel
 JsonDict = dict[str, Any]
 
 
+# ============================================================
+# Document
+# ============================================================
+
 class Document(DomainModel):
     """
     Mirrors documents table.
@@ -70,7 +74,7 @@ class Document(DomainModel):
 
     due_date: date | None = None
 
-    currency: str
+    currency: str | None = None
 
     subtotal: Decimal | None = None
 
@@ -86,7 +90,7 @@ class Document(DomainModel):
     # Financial
     # =====================================================
 
-    paid_amount: Decimal = Decimal("0")
+    paid_amount: Decimal | None = None
 
     balance_due: Decimal | None = None
 
@@ -110,7 +114,7 @@ class Document(DomainModel):
 
     error_message: str | None = None
 
-    retry_count: int
+    retry_count: int = 0
 
     last_retry_at: datetime | None = None
 
@@ -130,7 +134,7 @@ class Document(DomainModel):
     # Archive
     # =====================================================
 
-    is_archived: bool
+    is_archived: bool = False
 
     archived_at: datetime | None = None
 
@@ -144,10 +148,18 @@ class Document(DomainModel):
 
     notes: str | None = None
 
-    created_at: datetime
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
 
-    updated_at: datetime
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
 
+
+# ============================================================
+# Document Line Item
+# ============================================================
 
 class DocumentLineItem(DomainModel):
     """
@@ -190,11 +202,12 @@ class DocumentLineItem(DomainModel):
 
     project_code: str | None = None
 
-    line_order: int
-
     metadata: JsonDict = Field(default_factory=dict)
 
+    line_order: int
+
     created_at: datetime
+
 
 # ============================================================
 # OCR Result
@@ -243,7 +256,9 @@ class OCRResult(DomainModel):
 
     tokens_used: int
 
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC)
+    )
 
 
 # ============================================================
@@ -286,6 +301,7 @@ class PurchaseOrder(DomainModel):
     created_at: datetime
 
     updated_at: datetime
+
 
 # ============================================================
 # Invoice (Legacy)

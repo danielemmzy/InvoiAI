@@ -99,6 +99,28 @@ class VendorUpdate(BaseModel):
 
     tags: list[str] | None = None
 
+    po_required: bool | None = None
+
+    receipt_required: bool | None = None
+
+    approval_threshold: Decimal | None = None
+
+    default_gl_account_id: UUID | None = None
+
+    default_department_id: UUID | None = None
+
+    default_cost_center_id: UUID | None = None
+
+    requires_w9: bool | None = None
+
+    w9_on_file: bool | None = None
+
+    w9_document_url: str | None = None
+
+    payment_hold: bool | None = None
+
+    payment_hold_reason: str | None = None
+
 
 # ============================================================
 # Response
@@ -233,6 +255,28 @@ class VendorResponse(BaseModel):
     notes: str | None
 
     metadata: dict[str, Any]
+
+    po_required: bool
+
+    receipt_required: bool
+
+    approval_threshold: Decimal | None
+
+    default_gl_account_id: UUID | None
+
+    default_department_id: UUID | None
+
+    default_cost_center_id: UUID | None
+
+    requires_w9: bool
+
+    w9_on_file: bool
+
+    w9_document_url: str | None
+
+    payment_hold: bool
+
+    payment_hold_reason: str | None
 
     created_at: datetime
 

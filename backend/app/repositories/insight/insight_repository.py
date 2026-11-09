@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
+from fastapi.encoders import jsonable_encoder
+
 from app.mappers.insight_mapper import InsightMapper
 from app.repositories.base import BaseRepository
 
@@ -23,7 +25,7 @@ class InsightRepository(BaseRepository):
         if not rows:
             return []
 
-        response = self.table().insert(rows).execute()
+        response = self.table().insert(jsonable_encoder(rows)).execute()
         return self._many(response)
 
     async def list_active_for_org(

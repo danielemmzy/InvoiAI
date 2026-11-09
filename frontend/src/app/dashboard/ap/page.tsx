@@ -3,7 +3,7 @@
 // Totals, trend charts, top vendors by risk, and the working invoice queue.
 // See BACKEND_INTEGRATION_AP_DASHBOARD.md for the endpoints this reads.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight, Building2, FileStack, Wallet,
@@ -17,6 +17,7 @@ import {
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import { PageLoading, PageError, EmptyState } from "@/components/ui/PageState";
 import { useAPSummary, useAPInvoices, useTopVendors, useApproveCodings } from "@/hooks/useAP";
+import { useAppStore } from "@/store/useAppStore";
 import type { APDashboardFilters, APInvoiceRow, InvoiceStatusFilter } from "@/api/ap";
 
 const CHART_TEAL = "#1E7E4B";
@@ -63,15 +64,22 @@ function fmtDate(d: string | null | undefined) {
 const emptyFilters: APDashboardFilters = {};
 
 export default function APDashboardPage() {
+  const activeWorkspace = useAppStore((s) => s.activeWorkspace);
   const [filters, setFilters] = useState<APDashboardFilters>(emptyFilters);
   const [pendingSearch, setPendingSearch] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeWorkspace?.currency && !filters.reporting_currency) {
+      setFilters((current) => ({ ...current, reporting_currency: activeWorkspace.currency.toUpperCase() }));
+    }
+  }, [activeWorkspace?.currency, filters.reporting_currency]);
 
   const summary = useAPSummary(filters);
   const invoices = useAPInvoices({ ...filters, limit: 25 });
   const topVendors = useTopVendors(filters);
 
-  const hasFilters = Object.values(filters).some((v) => !!v);
+  const hasFilters = Object.entries(filters).some(([key, v]) => key !== "reporting_currency" && !!v);
 
   function updateFilter<K extends keyof APDashboardFilters>(key: K, value: APDashboardFilters[K]) {
     setFilters((f) => ({ ...f, [key]: value || undefined }));
@@ -108,6 +116,8 @@ export default function APDashboardPage() {
           <Link href="/dashboard/ap" className="ap-subnav-item active">Overview</Link>
           <Link href="/dashboard/ap/aging" className="ap-subnav-item">Aging analysis</Link>
           <Link href="/dashboard/ap/exceptions" className="ap-subnav-item">Exceptions</Link>
+          <Link href="/dashboard/ap/payments" className="ap-subnav-item">Payments</Link>
+          <Link href="/dashboard/settings/ap-rules" className="ap-subnav-item">AP settings</Link>
         </div>
       </div>
 
@@ -137,13 +147,19 @@ export default function APDashboardPage() {
         <select className="ap-filter-select" value={filters.priority ?? ""} onChange={(e) => updateFilter("priority", e.target.value as APDashboardFilters["priority"])}>
           {PRIORITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        <select className="ap-filter-select" value={filters.currency ?? ""} onChange={(e) => updateFilter("currency", e.target.value)}>
-          <option value="">All currencies</option>
-          <option value="USD">USD</option>
-          <option value="EUR">EUR</option>
-          <option value="GBP">GBP</option>
-          <option value="NGN">NGN</option>
+        <select className="ap-filter-select ap-currency-select" value={filters.reporting_currency ?? activeWorkspace?.currency?.toUpperCase() ?? "USD"} onChange={(e) => updateFilter("reporting_currency", e.target.value)} aria-label="Reporting currency">
+          <option value="">Workspace currency</option>
+          {Array.from(new Set([activeWorkspace?.currency?.toUpperCase(), "USD", "EUR", "GBP", "NGN", ...(summary.data?.by_currency?.map((x) => x.currency) ?? [])].filter(Boolean) as string[])).map((currency) => (
+            <option key={currency} value={currency}>{currency} · Reporting</option>
+          ))}
         </select>
+        <select className="ap-filter-select" value={filters.currency ?? ""} onChange={(e) => updateFilter("currency", e.target.value)} aria-label="Transaction currency">
+          <option value="">All uploaded currencies</option>
+          {(summary.data?.by_currency ?? []).map((item) => (
+            <option key={item.currency} value={item.currency}>{item.currency} · Original</option>
+          ))}
+        </select>
+        <div className="ap-currency-note">Invoice currency is always preserved</div>
         <button type="button" className="ap-filter-reset" onClick={resetFilters} disabled={!hasFilters}>
           <RotateCcw size={13} /> Reset
         </button>
@@ -312,7 +328,12 @@ export default function APDashboardPage() {
             {invoices.data.items.map((row) => (
               <button type="button" key={row.id} className="ap-table-row" onClick={() => setPreviewId(row.id)}>
                 <span className="ap-table-vendor">{row.vendor_name}</span>
-                <span className="ap-table-amount">{money(row.amount, row.currency)}</span>
+                <span className="ap-table-amount">
+                  <strong>{money(row.reporting_amount ?? row.amount, row.reporting_currency ?? row.currency)}</strong>
+                  {row.reporting_currency && row.reporting_currency !== row.currency && (
+                    <small>{money(row.amount, row.currency)} original</small>
+                  )}
+                </span>
                 <span><StatusPill status={row.status} /></span>
                 <span><PriorityPill priority={row.priority} /></span>
                 <span className="ap-table-tags">
@@ -395,7 +416,12 @@ function InvoicePreviewDrawer({ invoice, onClose }: { invoice: APInvoiceRow; onC
           <button className="drawer-close" onClick={onClose} aria-label="Close preview"><X size={18} /></button>
         </div>
 
-        <div className="drawer-amount">{money(invoice.amount, invoice.currency)}</div>
+        <div className="drawer-amount">
+          {money(invoice.reporting_amount ?? invoice.amount, invoice.reporting_currency ?? invoice.currency)}
+          {invoice.reporting_currency && invoice.reporting_currency !== invoice.currency && (
+            <span className="drawer-amount-note">Original: {money(invoice.amount, invoice.currency)} · FX {invoice.fx_rate?.toFixed(6) ?? "—"} on {fmtDate(invoice.fx_rate_date)}</span>
+          )}
+        </div>
 
         <div className="drawer-grid">
           <div><span className="muted">Invoice #</span><strong>{invoice.invoice_number || "—"}</strong></div>
@@ -420,6 +446,9 @@ function InvoicePreviewDrawer({ invoice, onClose }: { invoice: APInvoiceRow; onC
         )}
 
         <div className="drawer-actions">
+          <Link href={`/dashboard/document/${invoice.document_id}?ap=1`} className="btn-primary">
+            Select for AP <ArrowRight size={13} />
+          </Link>
           <Link href={`/dashboard/document/${invoice.document_id}`} className="btn-secondary">
             Full document <ExternalLink size={13} />
           </Link>

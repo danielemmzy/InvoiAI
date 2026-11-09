@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from uuid import UUID
 
 from app.core.enum.database import (
     DocumentStatus,
     RecommendationType,
     DocumentType,
+    PipelineStage,
 )
 
 from app.repositories.document.analysis_repository import (
@@ -13,6 +16,9 @@ from app.repositories.document.analysis_repository import (
 )
 from app.repositories.document.document_repository import (
     DocumentRepository,
+)
+from app.repositories.document.ocr_repository import (
+    OCRRepository,
 )
 from app.repositories.document.purchase_order_repository import (
     PurchaseOrderRepository,
@@ -31,6 +37,9 @@ from app.services.verification.engine import (
 from app.workers.embedding_worker import (
     EmbeddingWorker,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisService:
@@ -57,6 +66,7 @@ class AnalysisService:
         *,
         repository: AnalysisRepository,
         document_repository: DocumentRepository,
+        ocr_repository: OCRRepository,
         purchase_order_repository: PurchaseOrderRepository,
         verification_engine: VerificationEngine,
         embedding_worker: EmbeddingWorker,
@@ -65,10 +75,25 @@ class AnalysisService:
 
         self.repository = repository
         self.document_repository = document_repository
+        self.ocr_repository = ocr_repository
         self.purchase_order_repository = purchase_order_repository
         self.verification_engine = verification_engine
         self.embedding_worker = embedding_worker
         self.validation_service = validation_service or ValidationService()
+
+    async def _progress(
+        self,
+        document_id: UUID,
+        step: str,
+        message: str,
+        progress: int,
+    ) -> None:
+        await self.document_repository.update_processing_state(
+            document_id,
+            step=step,
+            message=message,
+            progress=progress,
+        )
 
     # =====================================================
     # Analysis
@@ -93,8 +118,14 @@ class AnalysisService:
             document.id,
             DocumentStatus.ANALYSIS_RUNNING,
         )
+        await self._progress(
+            document.id,
+            "analysis",
+            "Reading the extracted data and preparing financial checks",
+            44,
+        )
 
-        ocr = await self.document_repository.get_ocr_result(
+        ocr = await self.ocr_repository.get_latest_for_document(
             document.id,
         )
 
@@ -111,6 +142,12 @@ class AnalysisService:
         # before the 8-module verification engine, matching Flow 3.
         # Warnings never block the pipeline; hard errors are surfaced
         # via analysis.module_results so a human can see them on review.
+        await self._progress(
+            document.id,
+            "validation",
+            "Checking dates, amounts, totals, and financial consistency",
+            50,
+        )
         validation = await self.validation_service.validate(
             document,
             line_items,
@@ -149,6 +186,9 @@ class AnalysisService:
             vendor=vendor,
             purchase_order=purchase_order,
             duplicate_document=duplicate_document,
+            progress_callback=lambda step, message, progress: self._progress(
+                document.id, step, message, progress
+            ),
         )
 
         analysis = AnalysisBuilder.build(
@@ -197,6 +237,12 @@ class AnalysisService:
             document.id,
             status,
         )
+        await self._progress(
+            document.id,
+            "embedding",
+            "Building financial memory so InvoiAI can search and understand this document later",
+            94,
+        )
 
         # AP automation is additive: only invoice documents that were not
         # rejected enter the new AP control plane. Existing OCR/verification
@@ -209,20 +255,23 @@ class AnalysisService:
             from app.core.supabase import get_supabase
             get_supabase().table("documents").update({"workflow_route":"business_expense"}).eq("id",str(document.id)).execute()
 
-        if document.document_type == DocumentType.INVOICE and status != DocumentStatus.REJECTED:
-            from app.core.supabase import get_supabase
-            db = get_supabase()
-            db.table("documents").update({
-                "ap_status": "validating",
-                "match_status": "pending",
-                "gl_coding_status": "pending",
-            }).eq("id", str(document.id)).eq("org_id", str(document.org_id)).execute()
-
-        await self.embedding_worker.execute(
-            document_id=document.id,
+        task = asyncio.create_task(
+            self.embedding_worker.execute(document_id=document.id),
+            name=f"embedding:{document.id}",
         )
+        task.add_done_callback(self._log_embedding_failure)
 
         return analysis
+
+    @staticmethod
+    def _log_embedding_failure(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception:
+            logger.exception("Background embedding task failed")
+
 
     # =====================================================
     # Retrieval

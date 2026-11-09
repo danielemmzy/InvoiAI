@@ -170,6 +170,47 @@ class DocumentUpdate(BaseModel):
 
     notes: str | None = None
 
+
+class DocumentCaptureLineItem(BaseModel):
+    description: str = ""
+    quantity: Decimal | int | float | str = 0
+    unit_price: Decimal | int | float | str = 0
+    amount: Decimal | int | float | str = 0
+    sku: str | None = None
+    product_code: str | None = None
+    tax_rate: Decimal | int | float | str | None = None
+    tax_amount: Decimal | int | float | str | None = None
+    discount: Decimal | int | float | str | None = None
+    gl_account_id: UUID | None = None
+    gl_account_code: str | None = None
+    gl_account_name: str | None = None
+
+
+class DocumentCaptureUpdate(BaseModel):
+    """Human correction payload for captured document data."""
+    document_type: DocumentType | None = None
+    purchase_order_id: UUID | None = None
+    vendor_id: UUID | None = None
+    vendor_name: str | None = None
+    document_number: str | None = None
+    document_date: date | None = None
+    due_date: date | None = None
+    currency: str | None = None
+    payment_terms: str | None = None
+    payment_method: str | None = None
+    subtotal: Decimal | None = None
+    tax_rate: Decimal | None = None
+    tax_amount: Decimal | None = None
+    discount_amount: Decimal | None = None
+    total_amount: Decimal | None = None
+    amount_paid: Decimal | None = None
+    amount_due: Decimal | None = None
+    gl_account_id: UUID | None = None
+    gl_account_code: str | None = None
+    gl_account_name: str | None = None
+    overrides: dict[str, Any] | None = None
+    lines: list[DocumentCaptureLineItem] | None = None
+
 # ============================================================
 # Document Response
 # ============================================================
@@ -181,15 +222,27 @@ class DocumentResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # ============================================================
+    # Required identity fields
+    # ============================================================
+
     id: UUID
 
     org_id: UUID
 
-    created_by: UUID | None
+    # ============================================================
+    # Ownership / relationships
+    # ============================================================
 
-    vendor_id: UUID | None
+    created_by: UUID | None = None
 
-    purchase_order_id: UUID | None
+    vendor_id: UUID | None = None
+
+    purchase_order_id: UUID | None = None
+
+    # ============================================================
+    # Document classification
+    # ============================================================
 
     source: DocumentSource
 
@@ -197,11 +250,21 @@ class DocumentResponse(BaseModel):
 
     industry: str
 
-    external_id: str | None
+    # ============================================================
+    # External source
+    # ============================================================
 
-    external_url: str | None
+    external_id: str | None = None
 
-    external_source_data: dict[str, Any]
+    external_url: str | None = None
+
+    external_source_data: dict[str, Any] = Field(
+        default_factory=dict
+    )
+
+    # ============================================================
+    # File information
+    # ============================================================
 
     file_url: str
 
@@ -209,75 +272,121 @@ class DocumentResponse(BaseModel):
 
     file_type: FileType
 
-    file_size_bytes: int | None
+    file_size_bytes: int | None = None
 
-    file_hash: str | None
+    file_hash: str | None = None
 
-    vendor_name: str | None
+    # ============================================================
+    # Vendor / document metadata
+    # ============================================================
 
-    document_number: str | None
+    vendor_name: str | None = None
 
-    document_date: date | None
+    document_number: str | None = None
 
-    due_date: date | None
+    document_date: date | None = None
 
-    currency: str
+    due_date: date | None = None
 
-    subtotal: Decimal | None
+    currency: str | None = None
 
-    tax_amount: Decimal | None
+    # ============================================================
+    # Financial data
+    # ============================================================
 
-    tax_rate: Decimal | None
+    subtotal: Decimal | None = None
 
-    discount_amount: Decimal | None
+    tax_amount: Decimal | None = None
 
-    total_amount: Decimal | None
+    tax_rate: Decimal | None = None
 
-    amount_paid: Decimal | None
+    discount_amount: Decimal | None = None
 
-    amount_due: Decimal | None
+    total_amount: Decimal | None = None
 
-    payment_terms: str | None
+    amount_paid: Decimal | None = None
 
-    payment_method: str | None
+    amount_due: Decimal | None = None
+
+    # ============================================================
+    # Payment
+    # ============================================================
+
+    payment_terms: str | None = None
+
+    payment_method: str | None = None
+
+    # ============================================================
+    # Processing
+    # ============================================================
 
     pipeline_stage: PipelineStage
 
     status: DocumentStatus
 
-    validation_warnings: list[str]
+    validation_warnings: list[str] = Field(
+        default_factory=list
+    )
 
-    error_message: str | None
+    error_message: str | None = None
 
-    retry_count: int
+    retry_count: int = 0
 
-    last_retry_at: datetime | None
+    last_retry_at: datetime | None = None
 
-    sheets_url: str | None
+    # ============================================================
+    # Export
+    # ============================================================
 
-    last_exported_at: datetime | None
+    sheets_url: str | None = None
 
-    last_exported_format: str | None
+    last_exported_at: datetime | None = None
 
-    last_exported_by: UUID | None
+    last_exported_format: str | None = None
 
-    is_archived: bool
+    last_exported_by: UUID | None = None
 
-    archived_at: datetime | None
+    # ============================================================
+    # Archive
+    # ============================================================
 
-    archived_by: UUID | None
+    is_archived: bool = False
 
-    archive_reason: str | None
+    archived_at: datetime | None = None
 
-    notes: str | None
+    archived_by: UUID | None = None
+
+    archive_reason: str | None = None
+
+    # ============================================================
+    # Additional information
+    # ============================================================
+
+    notes: str | None = None
+
+    # ============================================================
+    # Timestamps
+    # ============================================================
 
     created_at: datetime
 
     updated_at: datetime
 
-# ============================================================
-# Document Analysis Response
-# ============================================================
+    # History/capture projection fields
+    total_quantity: Decimal | None = None
+    account_id: UUID | None = None
+    account_code: str | None = None
+    account_name: str | None = None
+    line_item_count: int = 0
+    classification_confidence: Decimal | None = None
+    classification_reason: str | None = None
+    classified_at: datetime | None = None
+    human_review_status: str | None = None
+    intelligence_status: str | None = None
+    capture_status: str | None = None
+    capture_progress: int = 0
+    capture_error: str | None = None
+    capture_overrides: dict[str, Any] = Field(default_factory=dict)
 
 class DocumentAnalysisResponse(BaseModel):
     """

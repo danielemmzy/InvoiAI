@@ -23,6 +23,11 @@ class NotificationType(StrEnum):
     INVOICE_PAID = "invoice_paid"
     INVOICE_OVERDUE = "invoice_overdue"
     PAYMENT_FAILED = "payment_failed"
+    PAYMENT_BLOCKED = "payment_blocked"
+    PAYMENT_AUTHORIZED = "payment_authorized"
+
+    INVOICE_MENTION = "invoice_mention"
+    APPROVAL_GROUP_ASSIGNED = "approval_group_assigned"
 
     INSIGHT_CRITICAL = "insight_critical"
     INTEGRATION_ERROR = "integration_error"

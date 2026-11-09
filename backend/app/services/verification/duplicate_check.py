@@ -76,6 +76,7 @@ class DuplicateCheck:
                 positives=positives,
                 warnings=warnings,
                 metadata={
+                    "available": True,
                     "duplicate_found": False,
                 },
             )
@@ -158,6 +159,7 @@ class DuplicateCheck:
 
         metadata.update(
             {
+                "available": True,
                 "duplicate_found": True,
                 "duplicate_document_id":
                     duplicate_document.id,

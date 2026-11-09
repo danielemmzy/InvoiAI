@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 from datetime import UTC, datetime, timedelta
 
+from app.core.enum.ap import InvoiceAPStatus
 from app.core.enum.database import (
     DocumentStatus,
     PipelineStage,
@@ -11,6 +13,55 @@ from app.mappers.document_mapper import DocumentMapper
 from app.models.domain.document import Document
 from app.repositories.base import BaseRepository
 from app.repositories.mixins.external_sync import ExternalSyncMixin
+
+
+logger = logging.getLogger(__name__)
+
+# Once an invoice enters AP, AP owns the shared processing_* columns. Document
+# Intelligence workers (OCR, analysis, embeddings) must not overwrite the label
+# and progress the AP page is showing.
+AP_OWNED_STATUSES = frozenset(
+    status.value
+    for status in (
+        InvoiceAPStatus.VALIDATING,
+        InvoiceAPStatus.MATCHING,
+        InvoiceAPStatus.CODING,
+        InvoiceAPStatus.MATCH_EXCEPTION,
+        InvoiceAPStatus.CODING_EXCEPTION,
+        InvoiceAPStatus.AWAITING_APPROVAL,
+        InvoiceAPStatus.APPROVED,
+        InvoiceAPStatus.SYNCING_TO_ERP,
+        InvoiceAPStatus.PAYMENT_READY,
+        InvoiceAPStatus.PAID,
+        InvoiceAPStatus.RECONCILED,
+    )
+)
+
+
+def ap_owns_document_progress(
+    *,
+    ap_enabled: bool | None,
+    ap_status: str | None,
+) -> bool:
+    """Whether Accounts Payable currently owns the shared progress fields."""
+    return bool(ap_enabled) and str(ap_status or "") in AP_OWNED_STATUSES
+
+
+def should_write_processing_state(
+    *,
+    ap_enabled: bool | None,
+    ap_status: str | None,
+    step: str,
+) -> bool:
+    """Return whether a progress write belongs to the document's owner.
+
+    AP steps (``ap_*``) are always allowed. Everything else is Document
+    Intelligence progress and is dropped while AP owns the invoice.
+    """
+    if step.startswith("ap_"):
+        return True
+    return not ap_owns_document_progress(ap_enabled=ap_enabled, ap_status=ap_status)
+
 
 
 class DocumentRepository(BaseRepository, ExternalSyncMixin):
@@ -217,14 +268,27 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
         limit: int = 50,
         offset: int = 0,
+        industry: str | None = None,
+        query: str | None = None,
     ) -> list[Document]:
 
-        response = (
+        if query and any(character in query for character in ",()"):
+            raise ValueError("Document search contains unsupported filter syntax.")
+
+        document_query = (
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("is_archived", False)
-            .order(
+        )
+        if industry:
+            document_query = document_query.eq("industry", industry)
+        if query and (term := query.strip()):
+            document_query = document_query.or_(
+                f"document_number.ilike.*{term}*,vendor_name.ilike.*{term}*"
+            )
+        response = (
+            document_query.order(
                 "created_at",
                 desc=True,
             )
@@ -343,6 +407,48 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
     # =========================================================
     # Pipeline
     # =========================================================
+
+    async def update_processing_state(
+        self,
+        document_id: UUID,
+        *,
+        step: str,
+        message: str,
+        progress: int,
+    ) -> None:
+        """Persist lightweight processing telemetry for the live UI.
+
+        AP and Document Intelligence share `processing_*` columns. While AP is
+        active, only AP-labelled steps may write them; otherwise an OCR or
+        analysis pass would replace the AP page's progress with an older phase.
+        """
+        if not step.startswith("ap_"):
+            current = (
+                self.table()
+                .select("ap_enabled,ap_status")
+                .eq("id", str(document_id))
+                .limit(1)
+                .execute()
+                .data
+                or []
+            )
+            if current and not should_write_processing_state(
+                ap_enabled=current[0].get("ap_enabled"),
+                ap_status=current[0].get("ap_status"),
+                step=step,
+            ):
+                logger.debug(
+                    "Skipping Document Intelligence progress write for AP-owned document %s (%s)",
+                    document_id,
+                    current[0].get("ap_status"),
+                )
+                return
+
+        self.db.table("documents").update({
+            "processing_step": step,
+            "processing_message": message,
+            "processing_progress": max(0, min(100, int(progress))),
+        }).eq("id", str(document_id)).execute()
 
     async def update_pipeline_stage(
         self,
@@ -1059,6 +1165,41 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
     # Related Records
     # =========================================================
 
+    async def replace_document_line_items(
+        self,
+        document_id: UUID,
+        org_id: UUID,
+        items: list[dict],
+    ) -> list[dict]:
+        """Replace extracted line items for a fresh OCR/extraction run."""
+        self.db.table("document_line_items").delete().eq(
+            "document_id", str(document_id)
+        ).eq("org_id", str(org_id)).execute()
+
+        if not items:
+            return []
+
+        now = datetime.now(UTC).isoformat()
+        rows = []
+        for item in items:
+            rows.append({
+                "document_id": str(document_id),
+                "org_id": str(org_id),
+                "description": item["description"],
+                "quantity": str(item["quantity"]),
+                "unit_price": str(item["unit_price"]),
+                "amount": str(item["amount"]),
+                "tax_rate": str(item["tax_rate"]) if item.get("tax_rate") is not None else None,
+                "tax_amount": str(item["tax_amount"]) if item.get("tax_amount") is not None else None,
+                "discount": str(item["discount"]) if item.get("discount") is not None else None,
+                "position": item["position"],
+                "metadata": item.get("metadata") or {},
+                "created_at": now,
+            })
+
+        response = self.db.table("document_line_items").insert(rows).execute()
+        return response.data or []
+
     async def get_document_line_items(
         self,
         document_id: UUID,
@@ -1076,6 +1217,44 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         )
 
         return response.data or []
+
+    async def create_document_line_items(self, *, org_id: UUID, document_id: UUID, items: list[dict]) -> list[dict]:
+        if not items:
+            return []
+        now = datetime.now(UTC).isoformat()
+        rows = [{**item, "org_id": str(org_id), "document_id": str(document_id), "created_at": now} for item in items]
+        return self.raw_many(self.db.table("document_line_items").insert(rows).execute())
+
+    async def list_document_line_items(self, *, org_id: UUID, document_id: UUID) -> list[dict]:
+        response = (
+            self.db.table("document_line_items").select("*")
+            .eq("org_id", str(org_id)).eq("document_id", str(document_id)).order("position").execute()
+        )
+        return self.raw_many(response)
+
+    async def get_document_line_item(self, *, org_id: UUID, item_id: UUID) -> dict | None:
+        response = (
+            self.db.table("document_line_items").select("*")
+            .eq("org_id", str(org_id)).eq("id", str(item_id)).limit(1).execute()
+        )
+        return self.raw(response) or None
+
+    async def get_document_for_org(self, *, org_id: UUID, document_id: UUID) -> dict | None:
+        response = (
+            self.table().select("id,org_id").eq("org_id", str(org_id)).eq("id", str(document_id)).limit(1).execute()
+        )
+        return self.raw(response) or None
+
+    async def update_document_line_item(self, *, org_id: UUID, item_id: UUID, data: dict) -> dict:
+        response = (
+            self.db.table("document_line_items").update(data)
+            .eq("org_id", str(org_id)).eq("id", str(item_id)).execute()
+        )
+        return self.raw(response)
+
+    async def delete_document_line_item(self, *, org_id: UUID, item_id: UUID) -> bool:
+        self.db.table("document_line_items").delete().eq("org_id", str(org_id)).eq("id", str(item_id)).execute()
+        return True
 
     async def get_vendor(
         self,

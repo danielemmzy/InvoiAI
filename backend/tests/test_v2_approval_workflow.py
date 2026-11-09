@@ -4,8 +4,8 @@ from decimal import Decimal
 from uuid import uuid4
 from types import SimpleNamespace
 
-from app2.services.approval.approval_step_service import ApprovalStepService
-from app2.core.enum.database import OrgRole
+from app.services.approval.approval_step_service import ApprovalStepService
+from app.core.enum.database import OrgRole
 
 
 @pytest.mark.asyncio

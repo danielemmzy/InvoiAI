@@ -43,10 +43,7 @@ function toQuery(filters?: PurchaseOrderFilters) {
   return qs ? `?${qs}` : "";
 }
 
-// See BACKEND_INTEGRATION_AP_DASHBOARD.md §10 — this router does not exist
-// on the backend yet. The PurchaseOrderService and repository underneath it
-// already do; this module is written against the spec so the frontend and
-// backend meet in the middle once it's added.
+// Backed by app/routers/purchase_orders.py.
 export const purchaseOrdersApi = {
   list: async (filters?: PurchaseOrderFilters) =>
     (await client.get<PurchaseOrderList>(`/purchase-orders${toQuery(filters)}`)).data,

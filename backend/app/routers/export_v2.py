@@ -1,6 +1,8 @@
 from __future__ import annotations
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+
+from app.core.auth import require_verified_user
 from app.context import AuthUser, OrganizationContext
 from app.core.auth import get_current_user
 from app.core.ocm import get_org_context
@@ -9,7 +11,11 @@ from app.core.limiter import limiter
 from app.core.authorization import require_permission
 from app.core.permissions import VIEW_DOCUMENTS
 
-router = APIRouter(prefix="/export", tags=["Export"])
+router = APIRouter(
+    prefix="/export",
+    tags=["Export"],
+    dependencies=[Depends(require_verified_user)],
+)
 
 
 async def _export(request, document_id, user, ctx, fmt):

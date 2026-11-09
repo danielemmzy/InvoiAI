@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.core.enum.ap import APExceptionType, APMatchStatus
 from app.core.supabase import get_supabase
@@ -46,8 +47,36 @@ class MatchingService:
         document: dict,
         line_items: list[dict],
         purchase_order: dict | None,
+        goods_receipt: dict | None = None,
     ) -> MatchResult:
+        selected_mode = str(document.get("ap_match_mode") or "auto")
         if not purchase_order:
+            if selected_mode in {"two_way", "three_way"}:
+                exception = self._exc(
+                    APExceptionType.MISSING_PO,
+                    "A purchase order is required for the selected match mode",
+                    "purchase order",
+                    "none",
+                    "critical",
+                )
+                await self.exceptions.upsert_open(
+                    __import__("app.models.domain.ap", fromlist=["InvoiceException"]).InvoiceException(
+                        id=uuid4(),
+                        org_id=org_id,
+                        document_id=document_id,
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc),
+                        **exception,
+                    )
+                )
+                self._update_document(
+                    org_id, document_id,
+                    match_status=APMatchStatus.EXCEPTION.value,
+                    two_way_match_passed=False,
+                    three_way_match_passed=False if selected_mode == "three_way" else None,
+                    match_exception_count=1,
+                )
+                return MatchResult(APMatchStatus.EXCEPTION, False, [exception])
             self._update_document(
                 org_id, document_id,
                 match_status=APMatchStatus.NOT_REQUIRED.value,
@@ -113,11 +142,16 @@ class MatchingService:
 
         # 3-way matching: invoice quantities must not exceed confirmed receipts
         # beyond tolerance. Receipt repository is tenant scoped.
-        receipts = await self.receipts.get_confirmed_for_po(
-            org_id, UUID(str(purchase_order["id"]))
-        )
+        if goods_receipt is not None:
+            receipts = [goods_receipt]
+        else:
+            receipts = await self.receipts.get_confirmed_for_po(
+                org_id, UUID(str(purchase_order["id"]))
+            )
         three_way: bool | None = None
-        requires_three_way = tol["match_mode"] == "three_way"
+        selected_mode = str(document.get("ap_match_mode") or "auto")
+        requires_three_way = selected_mode == "three_way" or tol["match_mode"] == "three_way"
+        requires_two_way = selected_mode == "two_way" or tol["match_mode"] == "two_way"
         if receipts:
             receipt_lines = self._receipt_quantities(receipts)
             if receipt_lines and line_items:
@@ -129,7 +163,11 @@ class MatchingService:
                 )
             else:
                 received = sum(
-                    (self._decimal(line.quantity_received) for r in receipts for line in r.lines),
+                    (
+                        self._decimal(line.get("quantity_received"))
+                        for r in receipts
+                        for line in (r.get("goods_receipt_lines", []) if isinstance(r, dict) else [])
+                    ),
                     Decimal("0"),
                 )
                 invoiced = sum(
@@ -158,9 +196,16 @@ class MatchingService:
                 ))
 
         for data in exceptions:
-            await self.exceptions.create_exception(
+            await self.exceptions.upsert_open(
                 __import__("app.models.domain.ap", fromlist=["InvoiceException"])
-                .InvoiceException(org_id=org_id, document_id=document_id, **data)
+                .InvoiceException(
+                    id=uuid4(),
+                    org_id=org_id,
+                    document_id=document_id,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                    **data,
+                )
             )
 
         two_way_failed = any(
@@ -290,10 +335,14 @@ class MatchingService:
     def _receipt_quantities(receipts):
         out = {}
         for receipt in receipts:
-            for line in receipt.lines:
-                key = str(getattr(line, "sku", None) or getattr(line, "description", None) or "").strip().lower()
+            lines = receipt.get("goods_receipt_lines", []) if isinstance(receipt, dict) else getattr(receipt, "lines", [])
+            for line in lines:
+                sku = line.get("sku") if isinstance(line, dict) else getattr(line, "sku", None)
+                description = line.get("description") if isinstance(line, dict) else getattr(line, "description", None)
+                quantity = line.get("quantity_received") if isinstance(line, dict) else getattr(line, "quantity_received", None)
+                key = str(sku or description or "").strip().lower()
                 if key:
-                    out[key] = out.get(key, Decimal("0")) + Decimal(str(line.quantity_received))
+                    out[key] = out.get(key, Decimal("0")) + Decimal(str(quantity or 0))
         return out
 
     @staticmethod

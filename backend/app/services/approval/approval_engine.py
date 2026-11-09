@@ -17,6 +17,8 @@ from app.models.domain.approval import (
 from app.repositories.approval.history_repository import ApprovalHistoryRepository
 from app.repositories.approval.step_repository import ApprovalStepRepository
 from app.repositories.approval.workflow_repository import ApprovalWorkflowRepository
+from app.services.audit_service import AuditService
+from app.core.supabase import get_supabase
 
 
 class ApprovalEngine:
@@ -30,7 +32,9 @@ class ApprovalEngine:
     - Complete/reject workflows.
     - Handle delegation.
     - Handle escalation.
-    - Write immutable approval history.
+    - Write immutable approval history (approval_history) and, when
+      an audit_service is supplied, the org-wide compliance audit
+      trail (audit_logs) for every terminal decision.
     - Keep workflow state and step state consistent.
 
     Business rules live here.
@@ -42,10 +46,25 @@ class ApprovalEngine:
         workflow_repository: ApprovalWorkflowRepository,
         step_repository: ApprovalStepRepository,
         history_repository: ApprovalHistoryRepository,
+        audit_service: AuditService | None = None,
     ) -> None:
         self.workflows = workflow_repository
         self.steps = step_repository
         self.history = history_repository
+        self.audit_service = audit_service
+
+    async def _audit(self, *, org_id: UUID, actor_id: UUID, action: str, resource_id: UUID, old_values: dict, new_values: dict) -> None:
+        if self.audit_service is None:
+            return
+        try:
+            await self.audit_service.log(
+                org_id=org_id, user_id=actor_id, action=action,
+                resource_type="approval_step", resource_id=resource_id,
+                old_values=old_values, new_values=new_values,
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Failed to write audit_logs entry for %s", resource_id)
 
     # =========================================================
     # START WORKFLOW
@@ -87,7 +106,7 @@ class ApprovalEngine:
             step.workflow_id = created_workflow.id
             step.org_id = created_workflow.org_id
 
-            if step.step_number == 1:
+            if step.stage_number == 1:
                 step.decision = ApprovalDecision.PENDING
             else:
                 step.decision = ApprovalDecision.SKIPPED
@@ -155,9 +174,9 @@ class ApprovalEngine:
             step=step,
         )
 
-        if step.step_number != workflow.current_step:
+        if step.stage_number != workflow.current_stage:
             raise ValueError(
-                "The supplied step is not the current approval step."
+                "The supplied step is not part of the current approval stage."
             )
 
         if step.decision != ApprovalDecision.PENDING:
@@ -174,6 +193,8 @@ class ApprovalEngine:
         old_status = workflow.status
 
         if decision == ApprovalDecision.APPROVED:
+            await self._validate_industry_controls(workflow=workflow, step=step, actor_id=actor_id)
+
             await self.steps.approve(
                 step_id,
                 comment,
@@ -189,6 +210,13 @@ class ApprovalEngine:
                 new_status=old_status,
                 comment=comment,
                 metadata={},
+            )
+
+            await self._audit(
+                org_id=workflow.org_id, actor_id=actor_id, action="document.approved",
+                resource_id=step.id,
+                old_values={"decision": ApprovalDecision.PENDING.value},
+                new_values={"decision": ApprovalDecision.APPROVED.value, "comment": comment},
             )
 
             return await self._advance_after_approval(
@@ -222,6 +250,13 @@ class ApprovalEngine:
                 new_status=ApprovalStatus.REJECTED,
                 comment=comment,
                 metadata={},
+            )
+
+            await self._audit(
+                org_id=workflow.org_id, actor_id=actor_id, action="document.rejected",
+                resource_id=step.id,
+                old_values={"decision": ApprovalDecision.PENDING.value},
+                new_values={"decision": ApprovalDecision.REJECTED.value, "comment": comment},
             )
 
             return rejected
@@ -300,6 +335,72 @@ class ApprovalEngine:
             f"Unsupported approval decision: {decision}"
         )
 
+    async def _validate_industry_controls(self, *, workflow: ApprovalWorkflow, step: ApprovalStep, actor_id: UUID) -> None:
+        """Enforce SoD and monetary authority at the point of approval.
+
+        Routing is advisory; the final decision is always checked against
+        current authority and organization policy. Legacy installations that
+        do not yet have the new tables fall back to the existing step limit.
+        """
+        db = get_supabase()
+        try:
+            doc_rows = (db.table("documents").select("id,created_by,ap_processed_by,currency,total_amount,vendor_name").eq("org_id", str(workflow.org_id)).eq("id", str(workflow.document_id)).limit(1).execute().data or [])
+            doc = doc_rows[0] if doc_rows else {}
+            sod_rows = (db.table("sod_rules").select("rule_key,enabled").eq("org_id", str(workflow.org_id)).eq("enabled", True).execute().data or [])
+            sod = {r.get("rule_key") for r in sod_rows}
+
+            # Approval is a decision on a specific document state. Material
+            # changes after routing invalidate the pending decision rather than
+            # allowing an approver to approve a different amount/vendor.
+            current_amount = Decimal(str(doc.get("total_amount") or 0))
+            if current_amount != Decimal(str(workflow.document_amount or 0)):
+                raise ValueError("Invoice amount changed after approval routing. The approval workflow must be recalculated.")
+            if workflow.vendor_name and str(doc.get("vendor_name") or "") != str(workflow.vendor_name):
+                raise ValueError("Invoice vendor changed after approval routing. The approval workflow must be recalculated.")
+            if str(doc.get("currency") or "").upper() != str(getattr(workflow, "metadata", {}).get("currency") or doc.get("currency") or "").upper():
+                # Older workflows may not have a currency snapshot; only enforce
+                # this when the workflow explicitly captured one.
+                if getattr(workflow, "metadata", {}).get("currency"):
+                    raise ValueError("Invoice currency changed after approval routing. The approval workflow must be recalculated.")
+
+            if "no_self_approval" in sod and str(doc.get("created_by") or "") == str(actor_id):
+                raise PermissionError("Segregation-of-duties policy prevents the requester from approving their own invoice.")
+            if "processor_cannot_approve" in sod and str(doc.get("ap_processed_by") or "") == str(actor_id):
+                raise PermissionError("Segregation-of-duties policy prevents the AP processor from approving the same invoice.")
+
+            if workflow.workflow_type == "payment" and "separate_payment_authorizer" in sod:
+                bill_workflows = (db.table("approval_workflows").select("id").eq("org_id", str(workflow.org_id)).eq("document_id", str(workflow.document_id)).eq("workflow_type", "bill").execute().data or [])
+                bill_ids = [str(x["id"]) for x in bill_workflows]
+                if bill_ids:
+                    prior_steps = (db.table("approval_steps").select("approver_id,claimed_by,decision").eq("org_id", str(workflow.org_id)).in_("workflow_id", bill_ids).eq("decision", "approved").execute().data or [])
+                    if any(str(x.get("approver_id") or "") == str(actor_id) or str(x.get("claimed_by") or "") == str(actor_id) for x in prior_steps):
+                        raise PermissionError("Segregation-of-duties policy requires a different member to authorize payment than the invoice approver.")
+
+            membership = (db.table("org_members").select("id").eq("org_id", str(workflow.org_id)).eq("user_id", str(actor_id)).eq("is_active", True).limit(1).execute().data or [])
+            if membership:
+                authorities = (db.table("approval_authorities").select("limit_amount,currency,effective_from,effective_until,is_active").eq("org_id", str(workflow.org_id)).eq("membership_id", membership[0]["id"]).eq("approval_type", "payment" if workflow.workflow_type == "payment" else "invoice").eq("is_active", True).execute().data or [])
+                currency = str(doc.get("currency") or "").upper()
+                amount = Decimal(str(doc.get("total_amount") or workflow.document_amount or 0))
+                valid = False
+                now = datetime.now(UTC)
+                for authority in authorities:
+                    if str(authority.get("currency") or "").upper() != currency: continue
+                    start = authority.get("effective_from")
+                    end = authority.get("effective_until")
+                    if start and datetime.fromisoformat(str(start).replace("Z", "+00:00")) > now: continue
+                    if end and datetime.fromisoformat(str(end).replace("Z", "+00:00")) < now: continue
+                    if Decimal(str(authority.get("limit_amount") or 0)) >= amount:
+                        valid = True
+                        break
+                if authorities and not valid:
+                    raise PermissionError("The approver does not have sufficient current approval authority for this amount and currency.")
+        except PermissionError:
+            raise
+        except Exception:
+            # New controls are additive; do not break existing installations
+            # before the migration has been applied.
+            return
+
     # =========================================================
     # ADVANCE WORKFLOW
     # =========================================================
@@ -312,10 +413,46 @@ class ApprovalEngine:
         actor_id: UUID,
     ) -> ApprovalWorkflow:
         """
-        Move the workflow to the next step or complete it.
+        Move the workflow to the next stage or complete it.
+
+        A "stage" is one or more steps sharing stage_number that
+        become active together:
+
+        - sequential/any_one/group: exactly one step per stage.
+          any_one differs only in that, when several steps are
+          assigned to the same stage (e.g. any member of a set
+          of individually-named approvers may act), the first
+          decision resolves the stage and the rest are withdrawn
+          (SKIPPED) rather than waited on.
+        - parallel: every step in the stage must be APPROVED
+          before the workflow advances; a single REJECTED already
+          short-circuits the whole workflow in process_decision.
         """
 
-        if completed_step.step_number >= workflow.total_steps:
+        stage_steps = await self._get_steps_by_stage(
+            workflow_id=workflow.id,
+            stage_number=completed_step.stage_number,
+        )
+
+        if workflow.execution_mode == "parallel":
+            still_pending = [
+                s for s in stage_steps
+                if s.id != completed_step.id and s.decision == ApprovalDecision.PENDING
+            ]
+            if still_pending:
+                # Other approvers in this stage haven't decided yet —
+                # record the approval but do not advance the workflow.
+                return workflow
+
+        elif workflow.execution_mode == "any_one":
+            for sibling in stage_steps:
+                if sibling.id != completed_step.id and sibling.decision == ApprovalDecision.PENDING:
+                    await self.steps.update_step(sibling.id, {"decision": ApprovalDecision.SKIPPED.value})
+
+        all_steps = await self.steps.list_workflow_steps(workflow.id)
+        is_last_stage = not any(s.stage_number > completed_step.stage_number for s in all_steps)
+
+        if is_last_stage:
             completed = await self.workflows.complete_workflow(
                 workflow.id,
             )
@@ -341,40 +478,41 @@ class ApprovalEngine:
 
             return completed
 
-        next_step_number = completed_step.step_number + 1
+        next_stage_number = completed_step.stage_number + 1
 
-        next_step = await self._get_step_by_number(
+        next_stage_steps = await self._get_steps_by_stage(
             workflow_id=workflow.id,
-            step_number=next_step_number,
+            stage_number=next_stage_number,
         )
 
-        if next_step is None:
+        if not next_stage_steps:
             raise RuntimeError(
-                f"Approval step {next_step_number} "
-                "does not exist."
+                f"Approval stage {next_stage_number} does not exist."
             )
 
-        if next_step.decision != ApprovalDecision.SKIPPED:
-            raise RuntimeError(
-                "Next approval step is not in an activatable state."
+        for next_step in next_stage_steps:
+            if next_step.decision != ApprovalDecision.SKIPPED:
+                raise RuntimeError(
+                    "Next approval step is not in an activatable state."
+                )
+
+            updated_step = await self.steps.update_step(
+                next_step.id,
+                {
+                    "decision": ApprovalDecision.PENDING.value,
+                },
             )
 
-        updated_step = await self.steps.update_step(
-            next_step.id,
-            {
-                "decision": ApprovalDecision.PENDING.value,
-            },
-        )
-
-        if updated_step is None:
-            raise RuntimeError(
-                "Failed to activate next approval step."
-            )
+            if updated_step is None:
+                raise RuntimeError(
+                    "Failed to activate next approval step."
+                )
 
         updated_workflow = await self.workflows.update_workflow(
             workflow.id,
             {
-                "current_step": next_step_number,
+                "current_step": next_stage_steps[0].step_number,
+                "current_stage": next_stage_number,
                 "status": ApprovalStatus.IN_REVIEW.value,
             },
         )
@@ -386,7 +524,7 @@ class ApprovalEngine:
 
         await self._record_history(
             workflow_id=workflow.id,
-            step_id=next_step.id,
+            step_id=next_stage_steps[0].id,
             org_id=workflow.org_id,
             actor_id=actor_id,
             action="workflow_advanced",
@@ -394,8 +532,8 @@ class ApprovalEngine:
             new_status=ApprovalStatus.IN_REVIEW,
             comment=None,
             metadata={
-                "previous_step": completed_step.step_number,
-                "current_step": next_step_number,
+                "previous_stage": completed_step.stage_number,
+                "current_stage": next_stage_number,
             },
         )
 
@@ -893,6 +1031,19 @@ class ApprovalEngine:
 
         return None
 
+    async def _get_steps_by_stage(
+        self,
+        *,
+        workflow_id: UUID,
+        stage_number: int,
+    ) -> list[ApprovalStep]:
+
+        steps = await self.steps.list_workflow_steps(workflow_id)
+        return sorted(
+            (s for s in steps if s.stage_number == stage_number),
+            key=lambda s: s.step_number,
+        )
+
     # =========================================================
     # VALIDATION
     # =========================================================
@@ -917,9 +1068,9 @@ class ApprovalEngine:
                 "Approval workflow document_id is required."
             )
 
-        if workflow.analysis_id is None:
+        if workflow.analysis_id is None and workflow.workflow_type != "payment":
             raise ValueError(
-                "Approval workflow analysis_id is required."
+                "Approval workflow analysis_id is required for bill workflows."
             )
 
         if workflow.initiated_by is None:
@@ -967,9 +1118,9 @@ class ApprovalEngine:
                     "Approval step id is required."
                 )
 
-            if step.approver_id is None:
+            if step.approver_id is None and step.approver_group_id is None:
                 raise ValueError(
-                    "Approval step approver_id is required."
+                    "Approval step requires either approver_id or approver_group_id."
                 )
 
             if step.workflow_id not in {

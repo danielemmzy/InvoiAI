@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import Type
 from uuid import UUID
@@ -495,3 +495,4 @@ class EmbeddingRepository(BaseRepository):
             DocumentEmbeddingMapper.to_domain(row)
             for row in (response.data or [])
         ]
+

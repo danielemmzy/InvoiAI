@@ -1,6 +1,6 @@
 import pytest
 
-from app2.core.distributed_lock import DistributedLock
+from app.core.distributed_lock import DistributedLock
 
 
 class FakeRedis:

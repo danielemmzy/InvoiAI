@@ -27,6 +27,7 @@ import logging
 from redis.asyncio import Redis
 
 from app.core.config import settings
+from app.core.error_handler import PlatformError
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,20 @@ async def get_redis() -> Redis:
             max_connections=settings.redis_max_connections,
         )
 
-        await _redis.ping()
+        try:
+            await _redis.ping()
+        except Exception as exc:
+            try:
+                await _redis.aclose()
+            finally:
+                _redis = None
+            raise PlatformError(
+                "Redis is temporarily unavailable.",
+                code="REDIS_UNAVAILABLE",
+                status_code=503,
+                retryable=True,
+                service="redis",
+            ) from exc
 
         logger.info(
             "Redis initialized successfully."

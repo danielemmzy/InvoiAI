@@ -47,6 +47,16 @@ export function useDecideApproval() {
   });
 }
 
+export function useApprovalHistory(documentId: string | null) {
+  const ws = useAppStore((s) => s.activeWorkspace?.id);
+  return useQuery({
+    queryKey: ["approval-history", documentId, ws],
+    queryFn: () => approvalsApi.getHistory(documentId!),
+    enabled: !!ws && !!documentId,
+    staleTime: 15_000,
+  });
+}
+
 /* ── Insights ──────────────────────────────────────────────── */
 
 export function useInsights() {

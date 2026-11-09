@@ -50,13 +50,19 @@ class ApprovalWorkflow(DomainModel):
 
     document_id: UUID
 
-    analysis_id: UUID
+    analysis_id: UUID | None = None
 
     status: ApprovalStatus
 
     current_step: int
 
+    current_stage: int = 1
+
     total_steps: int
+
+    workflow_type: str = "bill"
+
+    execution_mode: str = "sequential"
 
     document_amount: Decimal
 
@@ -84,6 +90,11 @@ class ApprovalWorkflow(DomainModel):
 
     metadata: dict[str, Any]
 
+    # Set by the database. Optional so inserts can rely on column defaults,
+    # but present so a row can be mapped back into the domain model.
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
 
 # ============================================================
 # Approval Step
@@ -102,11 +113,21 @@ class ApprovalStep(DomainModel):
 
     step_number: int
 
+    stage_number: int = 1
+
     step_name: str
 
-    approver_id: UUID
+    approver_id: UUID | None = None
 
     approver_role: OrgRole
+
+    approver_group_id: UUID | None = None
+
+    claimed_by: UUID | None = None
+
+    claimed_at: datetime | None = None
+
+    auto_escalated: bool = False
 
     spending_limit: Decimal | None = None
 
@@ -129,6 +150,9 @@ class ApprovalStep(DomainModel):
     escalated_at: datetime | None = None
 
     created_at: datetime
+
+    # Set by the database; optional on insert.
+    updated_at: datetime | None = None
 
 
 # ============================================================

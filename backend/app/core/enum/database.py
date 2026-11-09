@@ -27,6 +27,10 @@ class OrgRole(StrEnum):
     MEMBER = "member"
     VIEWER = "viewer"
     APPROVER = "approver"
+    FINANCE_MANAGER = "finance_manager"
+    AP_MANAGER = "ap_manager"
+    AP_MEMBER = "ap_member"
+    PAYMENT_APPROVER = "payment_approver"
 
 
 class PlanType(StrEnum):
@@ -71,6 +75,7 @@ class DocumentStatus(StrEnum):
     APPROVED = "approved"
     REJECTED = "rejected"
     FAILED = "failed"
+    QUARANTINED = "quarantined"
 
 
 class PipelineStage(StrEnum):
@@ -132,6 +137,13 @@ class FileType(StrEnum):
 # AI
 # ============================================================
 
+class AIProvider(StrEnum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GOOGLE = "google"
+    AWS_BEDROCK = "aws_bedrock"
+
+    
 class RiskLevel(StrEnum):
     LOW = "low"
     MEDIUM = "medium"

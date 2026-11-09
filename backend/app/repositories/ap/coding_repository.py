@@ -11,6 +11,9 @@ class InvoiceCodingRepository(BaseRepository):
         payload=InvoiceCodingMapper.to_insert(coding)
         existing=self.table().select("id").eq("document_id", str(coding.document_id)).eq("line_item_id", str(coding.line_item_id) if coding.line_item_id else "00000000-0000-0000-0000-000000000000").limit(1).execute()
         if existing.data:
+            # Preserve the existing row identity and creation timestamp on retry.
+            payload.pop("id", None)
+            payload.pop("created_at", None)
             result=self.table().update(payload | {"updated_at":datetime.now(UTC).isoformat()}).eq("id", existing.data[0]["id"]).execute()
         else:
             result=self.table().insert(payload).execute()

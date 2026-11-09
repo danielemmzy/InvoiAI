@@ -5,6 +5,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { exportApi } from "@/api/export";
+import { getErrorMessage } from "@/api/client";
 
 export function useExport() {
   const queryClient = useQueryClient();
@@ -58,10 +59,3 @@ export function useExport() {
   };
 }
 
-function getErrorMessage(error: unknown): string {
-  if (error && typeof error === "object" && "response" in error) {
-    const e = error as { response?: { data?: { detail?: string } } };
-    return e.response?.data?.detail || "";
-  }
-  return "";
-}

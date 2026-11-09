@@ -9,7 +9,7 @@
 
 import Link from "next/link";
 import {
-  Building2, FileStack, Wallet, UserCheck, Sparkles, ShoppingCart,
+  Building2, FileStack, Wallet, ShieldCheck, CheckCircle2,
   ArrowRight, Upload, ArrowUpRight,
 } from "lucide-react";
 import DashboardLayout from "@/components/layout/DashboardLayout";
@@ -18,9 +18,6 @@ import { useAppStore } from "@/store/useAppStore";
 import PersonalDashboardPage from "./personal/page";
 import { useDocuments } from "@/hooks/useDocuments";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
-import { useAPSummary, useTopVendors } from "@/hooks/useAP";
-import { usePendingApprovals, useInsights, usePurchaseOrders } from "@/hooks/useApprovalsInsightsPO";
-import { usePlanCatalog } from "@/hooks/useBilling";
 import DocumentRow from "@/components/documents/DocumentRow";
 
 function money(n: number | undefined, currency = "USD") {
@@ -38,83 +35,41 @@ export default function DashboardPage() {
 
   const { documents, isLoading: docsLoading } = useDocuments();
   const workspaces = useWorkspaces();
-  const summary = useAPSummary();
-  const topVendors = useTopVendors();
-  const approvals = usePendingApprovals();
-  const insights = useInsights();
-  const purchaseOrders = usePurchaseOrders({ is_open: true, limit: 1 });
-  const plans = usePlanCatalog();
-
   const recentDocs = documents.slice(0, 5);
   const usedPct = user?.usage ? Math.min((user.usage.used / user.usage.limit) * 100, 100) : 0;
   const businessWorkspaceCount = (workspaces.data ?? []).filter((w) => w.type === "business").length;
-  const currentPlanEntry = plans.data?.find((p) => p.id === (user?.plan || "free"));
-  const nextPlanEntry = plans.data?.find((p) => p.id === "starter");
-  const activeInsightCount = (insights.data ?? []).filter((i) => !i.is_dismissed).length;
+  const processingCount = documents.filter((d) => ["pending", "processing", "ocr_running", "ocr_complete", "analysis_running"].includes(d.status)).length;
+  const reviewCount = documents.filter((d) => ["needs_review", "rejected"].includes(d.status)).length;
 
   return (
     <DashboardLayout>
       {/* Header */}
       <div className="dash-page-header">
-        <div className="section-label">§00 Console / Overview</div>
+        <div className="section-label">Overview</div>
         <div className="dash-title serif">
           Good morning, {user?.email?.split("@")[0] || "there"}.
         </div>
-        <div className="dash-subtitle">
-          Everything across accounts payable, at a glance.
-        </div>
+        <div className="dash-subtitle">Your finance workspace.</div>
       </div>
 
-      {/* Top-level metrics — documents, vendors, invoices, workspaces */}
-      {summary.isLoading || workspaces.isLoading ? (
-        <PageLoading variant="cards" cards={6} />
-      ) : summary.isError ? (
-        <PageError title="Couldn't load your totals" onRetry={summary.refetch} />
+      {/* Fast first paint: dashboard loads documents/workspaces only. Heavy AP/insight/approval screens are opened on demand. */}
+      {docsLoading || workspaces.isLoading ? (
+        <PageLoading variant="cards" cards={4} />
       ) : (
-        <div className="ap-metric-grid" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
-          <OverviewMetric icon={<FileStack />} label="Documents used" value={user?.usage?.used ?? 0} sub={`${user?.usage?.remaining ?? 0} left this month`} />
-          <OverviewMetric icon={<Building2 />} label="Organizations" value={businessWorkspaceCount} sub={businessWorkspaceCount === 1 ? "business workspace" : "business workspaces"} />
-          <OverviewMetric icon={<Building2 />} label="Vendors" value={summary.data?.total_vendors ?? 0} sub={`${summary.data?.open_vendors ?? 0} with an open balance`} />
-          <OverviewMetric icon={<FileStack />} label="Invoices" value={summary.data?.total_invoices ?? 0} sub={`${summary.data?.open_invoices ?? 0} open`} />
-          <OverviewMetric icon={<Wallet />} label="Billed / open" value={money(summary.data?.total_amount, summary.data?.currency)} sub={money(summary.data?.open_amount, summary.data?.currency) + " open"} tone={summary.data?.overdue_amount ? "danger" : undefined} />
-          <OverviewMetric icon={<UserCheck />} label="Awaiting you" value={approvals.data?.length ?? 0} sub="pending approvals" tone={approvals.data?.length ? "warn" : undefined} />
+        <div className="ap-metric-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+          <OverviewMetric icon={<FileStack />} label="Documents" value={documents.length} hint="All uploaded documents in this workspace." />
+          <OverviewMetric icon={<Building2 />} label="Workspaces" value={businessWorkspaceCount} hint="Business workspaces you can access." />
+          <OverviewMetric icon={<CheckCircle2 />} label="Processing" value={processingCount} hint="Documents still being read or checked." />
+          <OverviewMetric icon={<ShieldCheck />} label="Attention" value={reviewCount} hint="Documents that need a decision." tone={reviewCount ? "warn" : undefined} />
         </div>
       )}
 
-      {/* Module status row — approvals, insights, purchase orders, at a glance */}
+      {/* Navigation cards are intentionally lightweight; each module fetches its own data when opened. */}
       <div className="overview-module-row">
-        <Link href="/dashboard/approvals" className="overview-module-card">
-          <div className="overview-module-icon warn"><UserCheck size={16} /></div>
-          <div>
-            <div className="overview-module-value">{approvals.isLoading ? "—" : approvals.data?.length ?? 0}</div>
-            <div className="overview-module-label">Pending approvals</div>
-          </div>
-          <ArrowRight size={14} className="overview-module-arrow" />
-        </Link>
-        <Link href="/dashboard/insights" className="overview-module-card">
-          <div className="overview-module-icon"><Sparkles size={16} /></div>
-          <div>
-            <div className="overview-module-value">{insights.isLoading ? "—" : activeInsightCount}</div>
-            <div className="overview-module-label">Active insights</div>
-          </div>
-          <ArrowRight size={14} className="overview-module-arrow" />
-        </Link>
-        <Link href="/dashboard/purchase-orders" className="overview-module-card">
-          <div className="overview-module-icon"><ShoppingCart size={16} /></div>
-          <div>
-            <div className="overview-module-value">{purchaseOrders.isLoading ? "—" : purchaseOrders.data?.total ?? 0}</div>
-            <div className="overview-module-label">Open purchase orders</div>
-          </div>
-          <ArrowRight size={14} className="overview-module-arrow" />
-        </Link>
-        <Link href="/dashboard/ap/aging" className="overview-module-card">
-          <div className="overview-module-icon danger"><ArrowUpRight size={16} /></div>
-          <div>
-            <div className="overview-module-value">{summary.isLoading ? "—" : money(summary.data?.overdue_amount, summary.data?.currency)}</div>
-            <div className="overview-module-label">Overdue balance</div>
-          </div>
-          <ArrowRight size={14} className="overview-module-arrow" />
-        </Link>
+        <Link href="/dashboard/approvals" className="overview-module-card ds-gloss" data-tooltip="Review and decide on routed invoices."><div className="overview-module-icon warn"><ShieldCheck size={16} /></div><div className="overview-module-label">Approvals</div><ArrowRight size={14} className="overview-module-arrow" /></Link>
+        <Link href="/dashboard/insights" className="overview-module-card ds-gloss" data-tooltip="See exceptions and trends worth acting on."><div className="overview-module-icon"><CheckCircle2 size={16} /></div><div className="overview-module-label">Insights</div><ArrowRight size={14} className="overview-module-arrow" /></Link>
+        <Link href="/dashboard/purchase-orders" className="overview-module-card ds-gloss" data-tooltip="Review purchase orders and matching evidence."><div className="overview-module-icon"><FileStack size={16} /></div><div className="overview-module-label">Purchase orders</div><ArrowRight size={14} className="overview-module-arrow" /></Link>
+        <Link href="/dashboard/ap" className="overview-module-card ds-gloss" data-tooltip="Open the payable queue, balances, and exceptions."><div className="overview-module-icon danger"><ArrowUpRight size={16} /></div><div className="overview-module-label">Payables</div><ArrowRight size={14} className="overview-module-arrow" /></Link>
       </div>
 
       {/* Usage bar */}
@@ -149,13 +104,10 @@ export default function DashboardPage() {
                 </Link>
               </div>
             )}
-            {!user.usage.limit_reached && user.plan === "free" && nextPlanEntry && (
-              <Link href="/dashboard/billing" className="upgrade-pill" style={{ textDecoration: "none" }}>
+            {!user.usage.limit_reached && user.plan === "free" && (
+              <Link href="/dashboard/billing" className="upgrade-pill" data-tooltip="See plan limits and upgrade options." style={{ textDecoration: "none" }}>
                 <div>
-                  <div className="upgrade-label">Upgrade to {nextPlanEntry.display_name}</div>
-                  <div className="upgrade-sub">
-                    {typeof nextPlanEntry.monthly_documents === "number" ? `${nextPlanEntry.monthly_documents} docs` : "Unlimited docs"} · ${nextPlanEntry.price_monthly}/month
-                  </div>
+                  <div className="upgrade-label">Need more documents?</div>
                 </div>
                 <span className="upgrade-arrow">→</span>
               </Link>
@@ -176,9 +128,7 @@ export default function DashboardPage() {
             <PageLoading variant="table" rows={4} />
           ) : recentDocs.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-icon">📄</div>
               <div className="empty-title serif">No documents yet</div>
-              <div className="empty-desc">Upload your first invoice to get started.</div>
               <Link href="/dashboard/upload" className="btn-primary">Upload document</Link>
             </div>
           ) : (
@@ -188,28 +138,17 @@ export default function DashboardPage() {
 
         {/* Right column */}
         <div>
-          {/* Top vendors mini-list */}
+          {/* Keep the first paint lightweight. Vendor/AP analytics are loaded inside their own modules. */}
           <div className="card" style={{ marginBottom: 20 }}>
             <div className="card-header">
-              <span className="card-title">Top vendors</span>
-              <Link href="/dashboard/vendors" className="card-action">All vendors →</Link>
+              <span className="card-title">Document activity</span>
+              <Link href="/dashboard/history" className="card-action">Open history →</Link>
             </div>
-            {topVendors.isLoading ? (
-              <PageLoading variant="table" rows={3} />
-            ) : !topVendors.data?.length ? (
-              <div className="empty-state" style={{ padding: "28px 20px" }}>
-                <div className="empty-desc">No vendor balances yet.</div>
-              </div>
-            ) : (
-              <div style={{ padding: "6px 20px 14px" }}>
-                {topVendors.data.slice(0, 4).map((v) => (
-                  <div key={v.vendor_id} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "0.5px solid #EBE6DC", fontSize: 13 }}>
-                    <span>{v.vendor_name}</span>
-                    <b>{money(v.current_balance, v.currency)}</b>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div style={{ padding: "8px 20px 18px" }}>
+              <div className="kv-row"><span className="kv-key">Completed</span><span className="kv-val">{documents.filter((d) => ["done", "needs_review", "approved", "rejected"].includes(d.status)).length}</span></div>
+              <div className="kv-row"><span className="kv-key">Processing</span><span className="kv-val">{processingCount}</span></div>
+              <div className="kv-row"><span className="kv-key">Needs attention</span><span className="kv-val">{reviewCount}</span></div>
+            </div>
           </div>
 
           {/* Upload CTA */}
@@ -217,10 +156,7 @@ export default function DashboardPage() {
             <button className="upload-card">
               <div className="upload-card-icon"><Upload size={18} /></div>
               <div className="upload-card-title serif">Upload a document</div>
-              <div className="upload-card-sub">
-                PDF, image, or scanned file.<br />Results in under 5 seconds.
-              </div>
-              <div className="upload-card-btn">Choose file →</div>
+              <div className="upload-card-btn">Choose file <ArrowRight size={14} /></div>
             </button>
           </Link>
         </div>
@@ -230,15 +166,14 @@ export default function DashboardPage() {
 }
 
 function OverviewMetric({
-  icon, label, value, sub, tone,
-}: { icon: React.ReactNode; label: string; value: React.ReactNode; sub?: string; tone?: "warn" | "danger" }) {
+  icon, label, value, hint, tone,
+}: { icon: React.ReactNode; label: string; value: React.ReactNode; hint: string; tone?: "warn" | "danger" }) {
   return (
-    <div className={`ap-metric-card${tone ? ` ${tone}` : ""}`}>
+    <div className={`ap-metric-card${tone ? ` ${tone}` : ""}`} data-tooltip={hint}>
       <div className="ap-metric-icon">{icon}</div>
       <div>
         <div className="ap-metric-label">{label}</div>
         <div className="ap-metric-value">{value}</div>
-        {sub && <div className="ap-metric-sub">{sub}</div>}
       </div>
     </div>
   );

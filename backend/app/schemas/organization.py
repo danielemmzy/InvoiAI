@@ -290,6 +290,10 @@ class OrganizationMemberResponse(BaseModel):
 
     spending_limit: Decimal | None
 
+    payment_approval_limit: Decimal | None
+
+    supervisor_id: UUID | None
+
     invited_by: UUID | None
 
     invite_email: str | None

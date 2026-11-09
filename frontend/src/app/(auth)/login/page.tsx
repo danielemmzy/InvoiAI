@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Loader2, Zap } from "lucide-react";
+import { Loader2, ShieldCheck, Zap } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
+import MotionMark from "@/components/ui/MotionMark";
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -23,21 +24,22 @@ export default function LoginPage() {
     <div className="auth-layout">
       {/* Left panel */}
       <div className="auth-panel">
+        <div className="auth-team-photo" role="img" aria-label="A finance team collaborating in a bright office" />
+        <div className="auth-photo-wash" />
         <div className="auth-panel-logo">
           <div className="auth-panel-icon"><Zap size={16} color="#C8922A" /></div>
           <span className="auth-panel-logo-text serif">Invoi<span>AI</span></span>
         </div>
-        <div>
-          <p className="auth-panel-quote serif">
-            &ldquo;InvoiAI cut our invoice processing time from 4 hours to 8 minutes.&rdquo;
-          </p>
-          <p className="auth-panel-author">Chidi O. · Finance Manager, Lagos</p>
+        <div className="auth-story">
+          <p className="auth-panel-quote serif">Every decision has a source. Every source has an owner.</p>
+          <p className="auth-panel-author">Return to the workspace where every payable has a clear next step.</p>
+          <div className="auth-lottie-frame" aria-hidden="true"><MotionMark /></div>
         </div>
         <div className="auth-panel-user">
-          <div className="auth-panel-avatar">C</div>
+          <div className="auth-panel-avatar"><ShieldCheck size={14} /></div>
           <div>
-            <div className="auth-panel-name">Chidi Okonkwo</div>
-            <div className="auth-panel-desc">Pro plan · 480 docs this month</div>
+            <div className="auth-panel-name">Control room access</div>
+            <div className="auth-panel-desc">Secure sign in</div>
           </div>
         </div>
       </div>
@@ -45,6 +47,7 @@ export default function LoginPage() {
       {/* Right panel */}
       <div className="auth-form-panel">
         <div className="auth-form-inner">
+          <div className="auth-mobile-motion" aria-hidden="true"><MotionMark /></div>
           <h1 className="auth-title serif">Welcome back</h1>
           <p className="auth-subtitle">
             Don&apos;t have an account?{" "}

@@ -61,13 +61,19 @@ class ApprovalWorkflowResponse(BaseModel):
 
     document_id: UUID
 
-    analysis_id: UUID
+    analysis_id: UUID | None
 
     status: ApprovalStatus
 
     current_step: int
 
+    current_stage: int
+
     total_steps: int
+
+    workflow_type: str
+
+    execution_mode: str
 
     document_amount: Decimal
 
@@ -119,11 +125,21 @@ class ApprovalStepResponse(BaseModel):
 
     step_number: int
 
+    stage_number: int
+
     step_name: str
 
-    approver_id: UUID 
+    approver_id: UUID | None
 
     approver_role: OrgRole
+
+    approver_group_id: UUID | None
+
+    claimed_by: UUID | None
+
+    claimed_at: datetime | None
+
+    auto_escalated: bool
 
     spending_limit: Decimal | None
 
@@ -191,7 +207,9 @@ class ApprovalQueueResponse(BaseModel):
     Mirrors approval_queue view.
     """
 
-    approver_id: UUID
+    approver_id: UUID | None = None
+    approver_group_id: UUID | None = None
+    claimed_by: UUID | None = None
 
     org_id: UUID
 

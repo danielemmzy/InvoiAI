@@ -1,4 +1,4 @@
-"""
+﻿"""
 ============================================================
 Embedding Service
 
@@ -23,6 +23,8 @@ from app.core.config import settings
 from app.models.domain.document import Document
 from app.models.domain.organization import Organization
 from app.models.domain.vendor import Vendor
+from datetime import datetime
+from uuid import uuid4
 
 from app.models.domain.embedding import (
     DocumentEmbedding,
@@ -86,12 +88,15 @@ class EmbeddingService:
         embedding = await self.generate(text)
 
         await self.repository.save_document_embedding(
-            DocumentEmbedding(
+           DocumentEmbedding(
+                id=uuid4(),
                 document_id=document.id,
                 org_id=document.org_id,
-                embedding=embedding,
                 source_text=text,
+                embedding=embedding,
                 model_used=self.MODEL,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
             )
         )
 
@@ -112,6 +117,7 @@ class EmbeddingService:
 
         await self.repository.save_vendor_embedding(
             VendorEmbedding(
+                id=uuid4(),
                 vendor_id=vendor.id,
                 org_id=vendor.org_id,
                 embedding=embedding,
@@ -162,7 +168,7 @@ class EmbeddingService:
                 None,
                 [
                     document.document_number,
-                    document.document_type.value,
+                    (document.document_type.value if hasattr(document.document_type, "value") else str(document.document_type)),
                     document.vendor_name,
                     document.currency,
                     str(document.total_amount),

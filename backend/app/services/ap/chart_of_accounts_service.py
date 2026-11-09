@@ -18,11 +18,20 @@ class ChartOfAccountsService:
         self.repository = ChartOfAccountRepository()
 
     @staticmethod
-    def _key(org_id: UUID) -> str:
-        return f"{_CACHE_PREFIX}:{org_id}"
+    def _key(org_id: UUID, *, active_only: bool = True) -> str:
+        scope = "active" if active_only else "all"
+        return f"{_CACHE_PREFIX}:{org_id}:{scope}"
+
+    @classmethod
+    def _cache_keys(cls, org_id: UUID) -> tuple[str, str]:
+        """Both cache scopes, so invalidation cannot leave a stale view behind."""
+        return (
+            cls._key(org_id, active_only=True),
+            cls._key(org_id, active_only=False),
+        )
 
     async def list(self, org_id: UUID, *, active_only: bool = True) -> list[dict]:
-        key = self._key(org_id)
+        key = self._key(org_id, active_only=active_only)
         try:
             redis = await get_redis()
             cached = await redis.get(key)
@@ -45,7 +54,7 @@ class ChartOfAccountsService:
     async def invalidate(self, org_id: UUID) -> None:
         try:
             redis = await get_redis()
-            await redis.delete(self._key(org_id))
+            await redis.delete(*self._cache_keys(org_id))
         except Exception:
             pass
 

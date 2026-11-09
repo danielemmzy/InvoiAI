@@ -47,6 +47,24 @@ MANAGE_BILLING = "billing:manage"
 VIEW_FINANCE = "finance:view"
 MANAGE_FINANCE = "finance:manage"
 
+MANAGE_AP_RULES = "ap_rules:manage"
+AUTHORIZE_PAYMENTS = "payments:authorize"
+OVERRIDE_PAYMENT_BLOCKS = "payments:override"
+
+# Industry-standard AP permissions. Roles are access profiles; approval
+# authority/limits are evaluated separately by the approval engine.
+VIEW_AP = "ap:view"
+PROCESS_AP = "ap:process"
+EDIT_AP = "ap:edit"
+APPROVE_AP = "ap:approve"
+REJECT_AP = "ap:reject"
+VIEW_PAYMENTS = "payments:view"
+APPROVE_PAYMENTS = "payments:approve"
+MANAGE_ROLES = "roles:manage"
+MANAGE_APPROVAL_AUTHORITY = "approval_authority:manage"
+MANAGE_DELEGATIONS = "approval_delegations:manage"
+MANAGE_SOD = "sod:manage"
+
 
 # ============================================================
 # Role Permission Mapping
@@ -90,6 +108,10 @@ ROLE_PERMISSIONS = {
         MANAGE_BILLING,
         VIEW_FINANCE,
         MANAGE_FINANCE,
+        MANAGE_AP_RULES,
+        AUTHORIZE_PAYMENTS,
+        OVERRIDE_PAYMENT_BLOCKS,
+        MANAGE_ROLES, MANAGE_APPROVAL_AUTHORITY, MANAGE_DELEGATIONS, MANAGE_SOD,
     },
 
     "admin": {
@@ -126,6 +148,9 @@ ROLE_PERMISSIONS = {
         VIEW_BILLING,
         VIEW_FINANCE,
         MANAGE_FINANCE,
+        MANAGE_AP_RULES,
+        AUTHORIZE_PAYMENTS,
+        MANAGE_ROLES, MANAGE_APPROVAL_AUTHORITY, MANAGE_DELEGATIONS, MANAGE_SOD,
     },
 
     "member": {
@@ -157,6 +182,32 @@ ROLE_PERMISSIONS = {
         VIEW_APPROVALS,
         APPROVE_DOCUMENTS,
         VIEW_FINANCE,
+        AUTHORIZE_PAYMENTS,
+    },
+
+    "finance_manager": {
+        VIEW_INSIGHTS, VIEW_DOCUMENTS, UPLOAD_DOCUMENTS, EDIT_DOCUMENTS,
+        VIEW_VENDORS, MANAGE_VENDORS, VIEW_ANALYTICS, VIEW_AI, RUN_AI,
+        VIEW_APPROVALS, APPROVE_DOCUMENTS, VIEW_FINANCE, MANAGE_FINANCE,
+        VIEW_AP, PROCESS_AP, EDIT_AP, APPROVE_AP, REJECT_AP,
+        VIEW_PAYMENTS, APPROVE_PAYMENTS, AUTHORIZE_PAYMENTS,
+    },
+
+    "ap_manager": {
+        VIEW_INSIGHTS, VIEW_DOCUMENTS, UPLOAD_DOCUMENTS, EDIT_DOCUMENTS,
+        VIEW_VENDORS, VIEW_AI, RUN_AI, VIEW_APPROVALS, APPROVE_DOCUMENTS,
+        VIEW_FINANCE, VIEW_AP, PROCESS_AP, EDIT_AP, APPROVE_AP, REJECT_AP,
+        MANAGE_AP_RULES,
+    },
+
+    "ap_member": {
+        VIEW_DOCUMENTS, UPLOAD_DOCUMENTS, EDIT_DOCUMENTS, VIEW_VENDORS,
+        VIEW_AI, RUN_AI, VIEW_FINANCE, VIEW_AP, PROCESS_AP, EDIT_AP,
+    },
+
+    "payment_approver": {
+        VIEW_DOCUMENTS, VIEW_APPROVALS, VIEW_FINANCE, VIEW_AP,
+        VIEW_PAYMENTS, APPROVE_PAYMENTS, AUTHORIZE_PAYMENTS,
     },
 
     "viewer": {

@@ -164,6 +164,7 @@ STARTER_PLAN = Plan(
             Features.EXCEL_EXPORT,
             Features.SHEETS_EXPORT,
             Features.DASHBOARD,
+            Features.MULTI_CURRENCY,
             Features.VENDOR_MEMORY,
             Features.AUDIT_LOGS,
             # Personal workspace — everything unlimited from here up

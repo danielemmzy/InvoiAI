@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 
+from google.api_core import exceptions as google_exceptions
 from google.cloud import documentai
 from google.oauth2 import service_account
 
@@ -11,14 +12,22 @@ from app.core.config import settings
 
 _GOOGLE_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
+# A single Google Document AI request should never block the OCR worker
+# for several minutes. The worker itself is responsible for job-level
+# retries.
+DOCUMENT_AI_TIMEOUT_SECONDS = 60.0
+
 
 def _google_credentials():
     """Build Google credentials from explicit service-account settings.
 
-    Local development should not depend on `gcloud auth application-default login`.
-    Production can still use GOOGLE_APPLICATION_CREDENTIALS when the explicit
-    service-account fields are not configured.
+    Local development should not depend on
+    `gcloud auth application-default login`.
+
+    Production can still use GOOGLE_APPLICATION_CREDENTIALS when the
+    explicit service-account fields are not configured.
     """
+
     if all(
         (
             settings.google_project_id,
@@ -28,6 +37,7 @@ def _google_credentials():
         )
     ):
         private_key = settings.google_private_key.replace("\\n", "\n")
+
         info = {
             "type": "service_account",
             "project_id": settings.google_project_id,
@@ -36,12 +46,17 @@ def _google_credentials():
             "client_email": settings.google_service_account_email,
             "token_uri": "https://oauth2.googleapis.com/token",
         }
+
         return service_account.Credentials.from_service_account_info(
             info,
             scopes=[_GOOGLE_CLOUD_PLATFORM_SCOPE],
         )
 
-    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+    credentials_path = os.getenv(
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "",
+    ).strip()
+
     if credentials_path:
         return service_account.Credentials.from_service_account_file(
             credentials_path,
@@ -51,7 +66,8 @@ def _google_credentials():
     raise RuntimeError(
         "Google Document AI is not configured. Set GOOGLE_PROJECT_ID, "
         "GOOGLE_PRIVATE_KEY_ID, GOOGLE_PRIVATE_KEY, and "
-        "GOOGLE_SERVICE_ACCOUNT_EMAIL, or set GOOGLE_APPLICATION_CREDENTIALS."
+        "GOOGLE_SERVICE_ACCOUNT_EMAIL, or set "
+        "GOOGLE_APPLICATION_CREDENTIALS."
     )
 
 
@@ -86,8 +102,8 @@ class GoogleDocumentAIService:
     """
 
     def __init__(self) -> None:
-
         credentials = _google_credentials()
+
         self.client = documentai.DocumentProcessorServiceClient(
             credentials=credentials,
         )
@@ -110,7 +126,27 @@ class GoogleDocumentAIService:
     ) -> OCRResponse:
         """
         Process a document using Google Document AI.
+
+        Important:
+        Google API automatic retry is deliberately disabled here.
+
+        The previous implementation allowed the Google SDK to retry
+        transient gRPC failures until its default 300-second deadline.
+        That caused an OCR job to appear frozen for several minutes.
+
+        Worker-level retrying belongs to OCRWorker/BaseWorker, not to
+        the individual provider request.
         """
+
+        if not content:
+            raise ValueError(
+                "Document content cannot be empty."
+            )
+
+        if not mime_type:
+            raise ValueError(
+                "Document MIME type is required."
+            )
 
         request = documentai.ProcessRequest(
             name=self.processor_name,
@@ -120,9 +156,30 @@ class GoogleDocumentAIService:
             ),
         )
 
-        result = self.client.process_document(
-            request=request,
-        )
+        try:
+            result = self.client.process_document(
+                request=request,
+                retry=None,
+                timeout=DOCUMENT_AI_TIMEOUT_SECONDS,
+            )
+
+        except google_exceptions.DeadlineExceeded as exc:
+            raise RuntimeError(
+                "Google Document AI timed out while processing the document. "
+                "The request was stopped after "
+                f"{int(DOCUMENT_AI_TIMEOUT_SECONDS)} seconds."
+            ) from exc
+
+        except google_exceptions.ServiceUnavailable as exc:
+            raise RuntimeError(
+                "Google Document AI is temporarily unavailable. "
+                "Please try the document again."
+            ) from exc
+
+        except google_exceptions.GoogleAPICallError as exc:
+            raise RuntimeError(
+                f"Google Document AI request failed: {exc}"
+            ) from exc
 
         document = result.document
 
@@ -131,17 +188,18 @@ class GoogleDocumentAIService:
         pages: list[OCRPage] = []
 
         for index, page in enumerate(document.pages):
-
             page_text = ""
 
             anchor = page.layout.text_anchor
 
             if anchor.text_segments:
-
                 for segment in anchor.text_segments:
-
-                    start = int(segment.start_index or 0)
-                    end = int(segment.end_index)
+                    start = int(
+                        segment.start_index or 0
+                    )
+                    end = int(
+                        segment.end_index
+                    )
 
                     page_text += raw_text[start:end]
 
@@ -155,24 +213,26 @@ class GoogleDocumentAIService:
         tables: list[dict] = []
 
         for page in document.pages:
-
             for table in page.tables:
-
                 tables.append(
                     {
-                        "header_rows": len(table.header_rows),
-                        "body_rows": len(table.body_rows),
+                        "header_rows": len(
+                            table.header_rows
+                        ),
+                        "body_rows": len(
+                            table.body_rows
+                        ),
                     }
                 )
 
         languages: set[str] = set()
 
         for page in document.pages:
-
             for language in page.detected_languages:
-
                 if language.language_code:
-                    languages.add(language.language_code)
+                    languages.add(
+                        language.language_code
+                    )
 
         confidences = [
             page.layout.confidence

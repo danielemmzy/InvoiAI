@@ -76,10 +76,23 @@ class Settings(BaseSettings):
     supabase_service_key: str
 
     # ========================================================
-    # OpenAI
+    # OpenAI / AI Providers (GL coding, extraction, classification)
     # ========================================================
 
-    openai_api_key: str
+    openai_api_key: str = ""
+
+    # GL coding AI is optional. Rules, vendor history and manual assignments
+    # work without it, so keep it off until a working provider/key is configured.
+    ap_gl_ai_enabled: bool = False
+
+    # AI provider selection: "openai" | "gemini" | "groq" | "local" | "disabled"
+    # Keep AI disabled by default until a working provider is configured.
+    ai_provider: str = "disabled"
+    ai_model: str = ""
+    ai_base_url: str = ""
+    gemini_api_key: str = ""
+    groq_api_key: str = ""
+    local_api_key: str = ""
 
     # ========================================================
     # Stripe
@@ -143,7 +156,7 @@ class Settings(BaseSettings):
     scheduler_lock_ttl_seconds: int = 300
     # Fail closed in production when Redis is unavailable. Development may
     # opt into fail-open behaviour for local work without Redis.
-    scheduler_lock_fail_open: bool = False
+    scheduler_lock_fail_open: bool = True
 
     # ========================================================
     # Background Workers
@@ -155,6 +168,15 @@ class Settings(BaseSettings):
     queue_name_email: str = "email"
 
     worker_concurrency: int = 4
+
+    # ========================================================
+    # Accounts Payable recovery
+    # ========================================================
+    # A document in validating/matching/coding older than this is considered
+    # abandoned and may be resumed by the cron sweeper.
+    ap_recovery_lease_seconds: int = 900
+    ap_recovery_max_attempts: int = 5
+    ap_recovery_sweep_limit: int = 25
 
     # ========================================================
     # Email
@@ -206,6 +228,14 @@ class Settings(BaseSettings):
     # AES-256-GCM key for OAuth tokens. Base64url-encoded 32 bytes.
     token_encryption_key: str = ""
 
+    # Six-digit email verification OTP. Codes are hashed with
+    # OTP_HASH_SECRET; when unset, SECRET_KEY is used as the pepper.
+    otp_expire_minutes: int = 10
+    otp_max_attempts: int = 5
+    otp_resend_cooldown_seconds: int = 60
+    otp_max_resends_per_hour: int = 5
+    otp_hash_secret: str = ""
+
     # ========================================================
     # Feature Toggles
     # ========================================================
@@ -218,6 +248,12 @@ class Settings(BaseSettings):
     # ========================================================
 
     sentry_dsn: str = ""
+
+    # Optional incident-alert webhook. Empty means alerts are logged only.
+    alert_webhook_url: str = ""
+
+    # Named owner for alerts; surfaced in the operator runbook.
+    alert_owner: str = "Platform on-call"
 
     # ========================================================
     # Google Service Account

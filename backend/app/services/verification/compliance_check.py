@@ -1,4 +1,4 @@
-"""
+﻿"""
 ============================================================
 Compliance Check
 
@@ -164,7 +164,11 @@ class ComplianceCheck:
         # -----------------------------------------------------
 
         metadata = {
-            "document_type": document.document_type.value,
+            "document_type": (
+                document.document_type.value
+                if hasattr(document.document_type, "value")
+                else str(document.document_type)
+            ),
             "currency": document.currency,
             "document_date": document.document_date,
             "due_date": document.due_date,
@@ -180,3 +184,4 @@ class ComplianceCheck:
             warnings=warnings,
             metadata=metadata,
         )
+

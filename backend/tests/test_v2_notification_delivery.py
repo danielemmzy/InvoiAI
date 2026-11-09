@@ -1,8 +1,8 @@
 from uuid import uuid4
 
-from app2.core.enum.notification import NotificationChannel, NotificationDeliveryStatus, NotificationProvider
-from app2.mappers.notification_delivery_mapper import NotificationDeliveryMapper
-from app2.models.domain.notification_delivery import NotificationDelivery
+from app.core.enum.notification import NotificationChannel, NotificationDeliveryStatus, NotificationProvider
+from app.mappers.notification_delivery_mapper import NotificationDeliveryMapper
+from app.models.domain.notification_delivery import NotificationDelivery
 
 
 def test_notification_delivery_round_trip_fields():

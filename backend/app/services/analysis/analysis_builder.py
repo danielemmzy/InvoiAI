@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -162,16 +162,22 @@ class AnalysisBuilder:
             ),
 
             math_expected_total=(
-                document.total_amount
-                or Decimal("0")
+                math_data.get("metadata", {}).get("expected_total")
+                if math_data.get("metadata", {}).get("expected_total") is not None
+                else (document.total_amount or Decimal("0"))
             ),
 
             math_actual_total=(
-                document.total_amount
-                or Decimal("0")
+                math_data.get("metadata", {}).get("actual_total")
+                if math_data.get("metadata", {}).get("actual_total") is not None
+                else (document.total_amount or Decimal("0"))
             ),
 
-            math_variance=Decimal("0"),
+            math_variance=(
+                math_data.get("metadata", {}).get("variance")
+                if math_data.get("metadata", {}).get("variance") is not None
+                else Decimal("0")
+            ),
 
 
             # =================================================
@@ -266,7 +272,7 @@ class AnalysisBuilder:
 
             analysis_version="1.0",
 
-            prompt_version=None,
+            prompt_version="1.0",
 
             temperature=Decimal("0"),
 

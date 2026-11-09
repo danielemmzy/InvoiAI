@@ -7,8 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from app2.core.enum.finance import OwnerType
-from app2.workers.finance_worker import FinanceWorker
+from app.core.enum.finance import OwnerType
+from app.workers.finance_worker import FinanceWorker
 
 
 class FakeBudgetRepository:

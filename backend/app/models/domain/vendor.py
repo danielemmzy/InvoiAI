@@ -93,6 +93,38 @@ class Vendor(TimestampedEntity):
 
     bank_change_count: int
 
+    bank_change_pending: bool = False
+
+    bank_change_requested_at: datetime | None = None
+
+    bank_change_verified_at: datetime | None = None
+
+    # ---------------------------------------------------------
+    # AP policy
+    # ---------------------------------------------------------
+
+    po_required: bool = False
+
+    receipt_required: bool = False
+
+    approval_threshold: Decimal | None = None
+
+    default_gl_account_id: UUID | None = None
+
+    default_department_id: UUID | None = None
+
+    default_cost_center_id: UUID | None = None
+
+    requires_w9: bool = False
+
+    w9_on_file: bool = False
+
+    w9_document_url: str | None = None
+
+    payment_hold: bool = False
+
+    payment_hold_reason: str | None = None
+
     # ---------------------------------------------------------
     # Statistics
     # ---------------------------------------------------------

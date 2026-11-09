@@ -10,6 +10,7 @@ from app.core.enum.database import (
 from app.models.domain.document import Document
 from app.repositories.document.document_repository import DocumentRepository
 
+
 class DocumentService:
     """
     Business logic for document management.
@@ -32,21 +33,30 @@ class DocumentService:
     ):
         self.repository = repository
 
+    # =========================================================
+    # Creation
+    # =========================================================
+
     async def create_document(
         self,
         document: Document,
+        *,
+        allow_duplicate: bool = False,
     ) -> Document:
         """
         Create a document.
 
-        Raises
-        ------
-        ValueError
-            If a duplicate already exists.
+        By default, exact duplicates are rejected.
+
+        When allow_duplicate=True, the caller has explicitly confirmed
+        that an existing file should be uploaded again, so the
+        application-level duplicate check is bypassed.
+
+        The database must also allow duplicate file hashes for this
+        explicit-confirmation workflow.
         """
 
-        if document.file_hash:
-
+        if document.file_hash and not allow_duplicate:
             duplicate = await self.repository.get_document_by_hash(
                 document.org_id,
                 document.file_hash,
@@ -54,12 +64,16 @@ class DocumentService:
 
             if duplicate:
                 raise ValueError(
-                    "Document already exists."
+                    "A document with the same file already exists."
                 )
 
         return await self.repository.create_document(
             document,
         )
+
+    # =========================================================
+    # Retrieval
+    # =========================================================
 
     async def get_document(
         self,
@@ -87,20 +101,25 @@ class DocumentService:
             org_id,
             document_number,
         )
+
     async def list_documents(
         self,
         org_id: UUID,
         limit: int = 50,
         offset: int = 0,
+        industry: str | None = None,
+        query: str | None = None,
     ) -> list[Document]:
 
         return await self.repository.list_documents(
             org_id,
             limit,
             offset,
+            industry,
+            query,
         )
 
-        # =========================================================
+    # =========================================================
     # Pipeline
     # =========================================================
 
@@ -133,12 +152,25 @@ class DocumentService:
         self,
         document_id: UUID,
     ) -> Document:
+        """
+        Mark a document as completed.
+
+        The project does not define DocumentStatus.COMPLETED.
+
+        The canonical completed state is:
+
+            status = APPROVED
+            pipeline_stage = COMPLETE
+        """
 
         document = await self.get_document(
             document_id,
         )
 
-        if document.status == DocumentStatus.COMPLETED:
+        if (
+            document.status == DocumentStatus.APPROVED
+            and document.pipeline_stage == PipelineStage.COMPLETE
+        ):
             return document
 
         updated = await self.repository.mark_completed(
@@ -179,6 +211,11 @@ class DocumentService:
         self,
         document_id: UUID,
     ) -> Document:
+        """
+        Restart processing for a failed document.
+
+        The valid first pipeline stage is INTAKE.
+        """
 
         document = await self.get_document(
             document_id,
@@ -195,17 +232,17 @@ class DocumentService:
 
         updated = await self.repository.update_pipeline_stage(
             document_id,
-            PipelineStage.UPLOADED,
+            PipelineStage.INTAKE,
         )
 
         if updated is None:
             raise ValueError(
-                "Unable to restart pipeline."
+                "Unable to restart document pipeline."
             )
 
         return updated
 
-        # =========================================================
+    # =========================================================
     # Archive
     # =========================================================
 
@@ -350,7 +387,7 @@ class DocumentService:
             offset,
         )
 
-        # =========================================================
+    # =========================================================
     # Statistics
     # =========================================================
 
@@ -403,36 +440,6 @@ class DocumentService:
     # =========================================================
     # Helpers
     # =========================================================
-
-    async def retry_processing(
-        self,
-        document_id: UUID,
-    ) -> Document:
-
-        document = await self.get_document(
-            document_id,
-        )
-
-        if document.status != DocumentStatus.FAILED:
-            raise ValueError(
-                "Only failed documents can be retried."
-            )
-
-        await self.repository.increment_retry(
-            document_id,
-        )
-
-        updated = await self.repository.update_pipeline_stage(
-            document_id,
-            PipelineStage.QUEUED,
-        )
-
-        if updated is None:
-            raise ValueError(
-                "Unable to queue document for retry."
-            )
-
-        return updated
 
     async def exists(
         self,

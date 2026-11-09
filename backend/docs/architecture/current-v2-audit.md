@@ -1,18 +1,11 @@
-# Current V2 Audit — archive verification
+# Current V2 Audit — source verification
 
 ## V1 boundary
 
-Frozen V1 routers:
-- auth
-- billing
-- export
-- history
-- industries
-- invoice
-- stripe_webhook
-- upload
-
-Any model directly under `app/models/` outside `app/models/domain/` is V1 by project rule.
+`app/main.py` mounts the current authenticated application routers only under
+`/api/v2`, plus `/api/public` for the token-gated vendor portal. It does not
+mount a V1 router. Frontend API callers use the Next BFF and the V2 contract;
+the only `/api/v1` reference in frontend source is historical documentation.
 
 ## V2 work verified in this archive
 
@@ -26,11 +19,10 @@ Any model directly under `app/models/` outside `app/models/domain/` is V1 by pro
 
 ## Remaining gates
 
-- Frontend is not present in this archive, so V1 route callers cannot be certified.
-- V1 routers remain mounted until endpoint-by-endpoint migration is verified.
+- Staging schema parity and deployed migration history still need verification before release.
 - Full pytest cannot be certified in an environment missing runtime dependencies; run `pip install -r requirements.txt` and then `pytest -q` in the project environment.
 - Integration token encryption at rest is still a security hardening task.
 - Push/SMS transports remain intentionally unconfigured abstractions.
-- LineItemService remains incomplete because no stable application-level create/update contract was supplied by the extraction pipeline.
+- Line-item service behavior is covered by focused unit tests; route-level capture integration still needs staged database verification.
 - Event-driven AuditWorker is implemented but intentionally not cron-scheduled.
 - FinanceWorker remains unimplemented because there is no defined finance background workflow to execute; do not invent business behavior just to fill the file.

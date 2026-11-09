@@ -2,9 +2,9 @@
 
 ## API versioning
 
-- `/api/v1/*` is the frozen V1 compatibility surface.
-- `/api/v2/*` is the canonical current API.
-- Root-mounted routes remain temporarily for backward compatibility and are marked deprecated in OpenAPI.
+- `/api/v2/*` is the canonical authenticated API surface.
+- `/api/public/*` is reserved for the token-gated vendor portal.
+- The current FastAPI application does not mount a V1 compatibility surface.
 - New frontend work must use `/api/v2/*`.
 - OAuth callback settings for Google, QuickBooks and Xero now point at `/api/v2/*`.
 
@@ -52,7 +52,7 @@ Stricter V2 endpoints:
 - OAuth callbacks: 20/minute
 - vendor and insight reads: 60/minute
 
-The existing V1 endpoint-specific limits remain unchanged.
+Rate limits apply to the mounted V2 and public routes listed above.
 
 ## Deployment requirement
 

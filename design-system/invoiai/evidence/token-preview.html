@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>InvoiAI token specimen</title>
+  <link rel="stylesheet" href="../../../frontend/src/styles/design-tokens.css" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 40px;
+      font-family: var(--font-ui);
+      background: var(--surface-page);
+      color: var(--ink-primary);
+    }
+    h1 { font-family: var(--font-display); font-size: 44px; line-height: 1; letter-spacing: -.04em; margin: 0 0 10px; }
+    h2 { font-size: 15px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-secondary); margin: 32px 0 12px; }
+    p { color: var(--ink-secondary); line-height: 1.6; margin: 0 0 16px; }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .swatch { width: 148px; padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle); background: var(--surface-raised); }
+    .chip { height: 34px; border-radius: var(--radius-sm); margin-bottom: 9px; border: 1px solid rgba(0,0,0,.06); }
+    .small { font-size: 11px; color: var(--ink-secondary); }
+    .glass { padding: 18px; border-radius: var(--radius-lg); max-width: 520px; }
+    .glass .label { font-size: 13px; font-weight: 700; color: var(--ink-primary); }
+    .gloss-card { padding: 20px; border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); background: var(--surface-raised); width: 250px; }
+    .gloss-card strong { display: block; font-size: 16px; margin-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden; }
+    th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
+    th { background: var(--surface-sunken); color: var(--ink-secondary); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .field { max-width: 320px; }
+    label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 7px; }
+    input { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--ink-primary); font: inherit; }
+    button { min-height: 44px; padding: 0 18px; border-radius: var(--radius-sm); border: 1px solid transparent; font: inherit; font-weight: 700; cursor: pointer; }
+    .primary { background: var(--accent-primary); color: var(--on-accent); }
+    .secondary { background: var(--surface-raised); border-color: var(--border-subtle); color: var(--ink-primary); }
+    .danger { background: var(--danger); color: var(--on-danger); }
+    .note { border-left: 3px solid var(--accent-primary); padding-left: 12px; }
+    .specimen { max-width: 1080px; margin: 0 auto; }
+    [data-ds-theme="dark"] .chip { border-color: rgba(255,255,255,.12); }
+    @media (max-width: 560px) {
+      body { padding: 20px; }
+      h1 { font-size: 34px; }
+      .swatch { width: calc(50% - 6px); }
+    }
+  </style>
+</head>
+<body>
+  <main class="specimen">
+    <h1>InvoiAI interface tokens</h1>
+    <p class="note">One semantic layer for surface, ink, accent, border, danger, focus, radius, elevation and motion. Display type: Playfair Display. UI type: DM Sans.</p>
+
+    <h2>Surface and ink</h2>
+    <div class="row">
+      <div class="swatch"><div class="chip" style="background:var(--surface-page)"></div><strong>Page</strong><div class="small">Ink 17.09:1</div></div>
+      <div class="swatch"><div class="chip" style="background:var(--surface-raised)"></div><strong>Raised</strong><div class="small">Ink 17.99:1</div></div>
+      <div class="swatch"><div class="chip" style="background:var(--surface-sunken)"></div><strong>Sunken</strong><div class="small">Muted 4.96:1</div></div>
+      <div class="swatch"><div class="chip" style="background:var(--accent-primary)"></div><strong>Accent</strong><div class="small">White 5.26:1</div></div>
+      <div class="swatch"><div class="chip" style="background:var(--danger)"></div><strong>Danger</strong><div class="small">White 7.25:1</div></div>
+      <div class="swatch"><div class="chip" style="background:var(--accent-mint)"></div><strong>Mint fill</strong><div class="small">Ink 13.63:1</div></div>
+    </div>
+
+    <h2>Glass, gloss and elevation</h2>
+    <div class="row">
+      <div class="ds-glass glass"><div class="label">Chrome glass</div><div class="small">Navigation, top bars, scrims and decoration only. Never behind table values, forms, review or approval content.</div></div>
+      <div class="ds-gloss gloss-card"><strong>Gloss card</strong><span class="small">Opaque surface + restrained specular highlight.</span></div>
+      <div class="ds-data-surface ds-elevation-2 gloss-card"><strong>Data surface</strong><span class="small">Opaque. Default for dense text and financial values.</span></div>
+    </div>
+
+    <h2>Working surface: table</h2>
+    <table>
+      <thead><tr><th>Vendor</th><th>Invoice</th><th>Status</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Acme Industrial</td><td>INV-2048</td><td>Ready to approve</td><td class="num">£8,420.00</td></tr>
+        <tr><td>Northstar Supply</td><td>INV-2091</td><td>Needs coding</td><td class="num">$2,100.00</td></tr>
+        <tr><td>Horizon Freight</td><td>INV-2104</td><td>Due Friday</td><td class="num">€5,900.00</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Form and actions</h2>
+    <div class="row" style="align-items:flex-end">
+      <div class="field">
+        <label for="amount">Invoice amount</label>
+        <input id="amount" value="8,420.00" />
+      </div>
+      <button class="primary">Approve</button>
+      <button class="secondary">Request change</button>
+      <button class="danger">Reject</button>
+    </div>
+
+    <h2>Status text</h2>
+    <p style="color:var(--success)">Confirmed: provider sync completed.</p>
+    <p style="color:var(--warning)">Warning: tax code needs an explicit choice.</p>
+    <p style="color:var(--danger)">Error: the invoice total does not reconcile.</p>
+  </main>
+  <script>
+    const theme = new URLSearchParams(location.search).get("theme");
+    if (theme === "dark") document.documentElement.dataset.dsTheme = "dark";
+  </script>
+</body>
+</html>

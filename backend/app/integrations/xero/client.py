@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
+import httpx
+
 from app.integrations.base.client import BaseAPIClient
 from app.core.enum.database import IntegrationProvider
 from app.repositories.integration.integration_repository import IntegrationConnectionRepository
@@ -21,9 +25,11 @@ class XeroClient(BaseAPIClient):
         self,
         *,
         org_id,
+        transport: httpx.AsyncBaseTransport | None = None,
+        sleep: Any | None = None,
     ) -> None:
 
-        super().__init__()
+        super().__init__(transport=transport, sleep=sleep)
 
         self.org_id = org_id
 

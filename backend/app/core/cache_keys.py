@@ -13,9 +13,10 @@ def organization(org_id: str) -> str:
 def organization_permissions(org_id: str, user_id: str) -> str:
     return f"v2:organization:{org_id}:permissions:{user_id}"
 
-def vendors(org_id: str, query: str | None, limit: int) -> str:
+def vendors(org_id: str, query: str | None, limit: int, risk_level: str | None = None) -> str:
     normalized = (query or "").strip().lower()
-    return f"v2:vendors:{org_id}:{limit}:{normalized}"
+    normalized_risk = (risk_level or "").strip().lower()
+    return f"v2:vendors:{org_id}:{limit}:{normalized}:{normalized_risk}"
 
 def insights(org_id: str, limit: int, offset: int) -> str:
     return f"v2:insights:{org_id}:{limit}:{offset}"

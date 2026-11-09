@@ -25,6 +25,7 @@ from app.core.enum.database import PlanType
 from app.mappers.organization_mapper import OrganizationMapper
 from app.models.domain.organization import Organization
 from app.repositories.base import BaseRepository
+from app.core.plan import document_limit_for
 
 
 class OrganizationRepository(BaseRepository):
@@ -42,10 +43,48 @@ class OrganizationRepository(BaseRepository):
         return await self.create(organization)
 
     async def get_organization(
-        self,
-        org_id: UUID,
-    ) -> Organization | None:
-        return await self.get(org_id)
+    self,
+    org_id: UUID,
+) -> Organization | None:
+        """
+        Load an organization.
+
+        Legacy organizations may have NULL document_limit values.
+        Repair those records using the organization's current plan before
+        converting the database row into the Organization domain model.
+        """
+
+        response = (
+            self.table()
+            .select("*")
+            .eq("id", str(org_id))
+            .limit(1)
+            .execute()
+        )
+
+        rows = getattr(response, "data", None) or []
+
+        if not rows:
+            return None
+
+        row = dict(rows[0])
+
+        # Repair legacy rows where document_limit was NULL.
+        if row.get("document_limit") is None:
+            limit = document_limit_for(PlanType.FREE)
+
+            self.table().update(
+                {
+                    "document_limit": limit,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            ).eq(
+                "id",
+                str(org_id),
+            ).execute()
+
+            row["document_limit"] = limit
+        return self.mapper.to_domain(row)
 
     async def update_organization(
         self,

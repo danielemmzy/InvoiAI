@@ -1,4 +1,4 @@
-"""
+﻿"""
 ============================================================
 OCR Validation Module
 
@@ -133,9 +133,14 @@ class OCRValidation:
             warnings=warnings,
             metadata={
                 "page_count": result.page_count,
-                "engine": result.engine.value,
+                "engine": (
+                    result.engine.value
+                    if hasattr(result.engine, "value")
+                    else str(result.engine)
+                ),
                 "engine_version": result.engine_version,
                 "processing_ms": result.processing_ms,
                 "tokens_used": result.tokens_used,
             },
         )
+

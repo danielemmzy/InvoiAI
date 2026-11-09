@@ -42,6 +42,7 @@ export default function VendorsPage() {
           <option value="low">Low risk</option>
           <option value="medium">Medium risk</option>
           <option value="high">High risk</option>
+          <option value="critical">Critical risk</option>
         </select>
         <button type="button" className="ap-filter-reset" onClick={() => { setSearch(""); setRiskLevel(""); }} disabled={!hasFilters}>
           <RotateCcw size={13} /> Reset

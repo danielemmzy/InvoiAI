@@ -145,7 +145,7 @@ export default function DocsPage() {
               through webhooks, so both systems stay current without you
               doing anything.
             </p>
-            <div className="docs-code">POST /api/v1/integrations/quickbooks/connect{"\n"}POST /api/v1/integrations/xero/connect</div>
+            <div className="docs-code">POST /api/v2/integrations/quickbooks/connect{"\n"}POST /api/v2/integrations/xero/connect</div>
             <p>
               Disconnecting is one click and stops future syncs — it
               never deletes documents InvoiAI has already processed.

@@ -1,22 +1,28 @@
 import client from "./client";
 import {
   AuthResponse,
+  ResendOtpResponse,
   SignupResponse,
   User,
+  VerifyOtpResponse,
 } from "@/types";
+
+export interface SignupPayload {
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+  mobile?: string;
+}
 
 export const authApi = {
   signup: async (
-    email: string,
-    password: string,
+    payload: SignupPayload,
   ): Promise<SignupResponse> => {
     const { data } =
       await client.post<SignupResponse>(
         "/auth/signup",
-        {
-          email,
-          password,
-        },
+        payload,
       );
 
     return data;
@@ -65,17 +71,44 @@ export const authApi = {
       message: string;
     },
 
+  /*
+   * Six-digit email verification.
+   *
+   * These are public auth endpoints: the account has no session until
+   * the code is confirmed.
+   */
+  verifyOtp: async (
+    email: string,
+    code: string,
+  ): Promise<VerifyOtpResponse> => {
+    const { data } =
+      await client.post<VerifyOtpResponse>(
+        "/auth/verify-otp",
+        { email, code },
+      );
+
+    return data;
+  },
+
+  resendOtp: async (
+    email: string,
+  ): Promise<ResendOtpResponse> => {
+    const { data } =
+      await client.post<ResendOtpResponse>(
+        "/auth/resend-otp",
+        { email },
+      );
+
+    return data;
+  },
+
+  /**
+   * @deprecated The product now sends six-digit codes. Kept as a thin
+   * alias for older clients; the backend routes it to resendOtp.
+   */
   resendVerification: async (
     email: string,
-  ) =>
-    (
-      await client.post(
-        "/auth/resend-verification",
-        { email },
-      )
-    ).data as {
-      message: string;
-    },
+  ) => authApi.resendOtp(email),
 
   /*
    * Supabase password-reset token.

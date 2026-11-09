@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from app.core.enum.database import PipelineStage
 from app.repositories.document.document_repository import DocumentRepository
 from app.repositories.document.payment_repository import PaymentRepository
 from app.services.insights.result import AnalyzerResult
@@ -55,7 +56,7 @@ class CashflowAnalyzer:
         )
 
         upcoming_due = await self.documents.list_by_pipeline_stage(
-            org_id, "approval", limit=100
+            org_id, PipelineStage.APPROVAL, limit=100
         ) if hasattr(self.documents, "list_by_pipeline_stage") else []
 
         predicted_shortfall = 0.0

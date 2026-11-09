@@ -18,8 +18,8 @@ class AuthService:
         self.profiles = profile_repository or ProfileRepository()
         self.usage = usage_service
 
-    async def signup(self, email, password):
-        return await self.auth.signup(email, password)
+    async def signup(self, email, password, metadata=None):
+        return await self.auth.signup(email, password, metadata)
 
     async def login(self, email, password):
         return await self.auth.login(email, password)
@@ -70,5 +70,9 @@ class AuthService:
                 else None
             ),
             "plan": getattr(user, "plan", None),
+            "is_verified": bool(getattr(user, "is_verified", False)),
+            "email_verification_required": not bool(
+                getattr(user, "is_verified", False)
+            ),
             "usage": usage,
         }

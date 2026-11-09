@@ -19,7 +19,7 @@ No repositories.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from app.models.domain.document import (
     Document,
@@ -36,6 +36,15 @@ class MathCheck:
     """
 
     TOLERANCE = Decimal("0.01")
+
+    @staticmethod
+    def _decimal(value: object, default: Decimal) -> Decimal:
+        if value is None or value == "":
+            return default
+        try:
+            return Decimal(str(value).replace(",", "").strip())
+        except (InvalidOperation, ValueError, TypeError):
+            return default
 
     async def run(
         self,
@@ -60,23 +69,36 @@ class MathCheck:
         calculated_subtotal = Decimal("0")
 
         for item in line_items:
+            # DocumentRepository returns Supabase rows as dictionaries.
+            # The verification layer must accept that persistence shape;
+            # do not assume callers have already converted rows into
+            # DocumentLineItem Pydantic objects.
+            if isinstance(item, dict):
+                description = str(item.get("description") or "Line item")
+                quantity = self._decimal(item.get("quantity"), Decimal("1"))
+                unit_price = self._decimal(item.get("unit_price"), Decimal("0"))
+                amount = self._decimal(item.get("amount"), Decimal("0"))
+                discount = self._decimal(item.get("discount"), Decimal("0"))
+            else:
+                description = item.description
+                quantity = self._decimal(item.quantity, Decimal("1"))
+                unit_price = self._decimal(item.unit_price, Decimal("0"))
+                amount = self._decimal(item.amount, Decimal("0"))
+                discount = self._decimal(item.discount, Decimal("0"))
 
-            expected = item.quantity * item.unit_price
+            expected = quantity * unit_price - discount
 
-            if item.discount:
-                expected -= item.discount
-
-            if abs(expected - item.amount) > self.TOLERANCE:
+            if abs(expected - amount) > self.TOLERANCE:
 
                 passed = False
 
                 score -= 10
 
                 reasons.append(
-                    f"Line item '{item.description}' total mismatch."
+                    f"Line item '{description}' total mismatch."
                 )
 
-            calculated_subtotal += item.amount
+            calculated_subtotal += amount
 
         # -----------------------------------------------------
         # Subtotal
@@ -104,33 +126,39 @@ class MathCheck:
         # Grand Total
         # -----------------------------------------------------
 
-        if (
-            document.subtotal is not None
-            and document.tax_amount is not None
-            and document.total_amount is not None
-        ):
+        expected_total: Decimal | None = None
+        variance: Decimal | None = None
 
-            expected_total = (
-                document.subtotal
-                + document.tax_amount
-                - (document.discount_amount or Decimal("0"))
-            )
-
-            if abs(expected_total - document.total_amount) > self.TOLERANCE:
-
-                passed = False
-
-                score -= 30
-
-                reasons.append(
-                    "Grand total calculation is incorrect."
-                )
-
+        if document.subtotal is not None and document.total_amount is not None:
+            if document.tax_amount is None:
+                expected_without_tax = document.subtotal - (document.discount_amount or Decimal("0"))
+                if abs(expected_without_tax - document.total_amount) > self.TOLERANCE:
+                    passed = False
+                    score -= 30
+                    reasons.append("Grand total cannot be fully reconciled without tax amount.")
             else:
-
-                positives.append(
-                    "Grand total validated."
+                expected_total = (
+                    document.subtotal
+                    + document.tax_amount
+                    - (document.discount_amount or Decimal("0"))
                 )
+                variance = document.total_amount - expected_total
+
+                if abs(variance) > self.TOLERANCE:
+
+                    passed = False
+
+                    score -= 30
+
+                    reasons.append(
+                        "Grand total calculation is incorrect."
+                    )
+
+                else:
+
+                    positives.append(
+                        "Grand total validated."
+                    )
 
         # -----------------------------------------------------
         # Build Result
@@ -149,5 +177,8 @@ class MathCheck:
                 "subtotal": document.subtotal,
                 "tax": document.tax_amount,
                 "total": document.total_amount,
+                "expected_total": expected_total,
+                "actual_total": document.total_amount,
+                "variance": variance,
             },
         )

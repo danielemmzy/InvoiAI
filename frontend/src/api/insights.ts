@@ -22,5 +22,5 @@ export interface InsightRow {
 export const insightsApi = {
   list: async () => (await client.get<InsightRow[]>("/insights")).data,
   generate: async () => (await client.post<InsightRow[]>("/insights/generate")).data,
-  dismiss: async (id: string) => (await client.patch(`/insights/${id}`, { is_dismissed: true })).data,
+  dismiss: async (id: string) => (await client.patch(`/insights/${id}/dismiss`)).data,
 };

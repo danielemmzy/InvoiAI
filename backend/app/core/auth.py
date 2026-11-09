@@ -15,8 +15,8 @@ get_current_user now accepts the access token from either the
 Authorization header (unchanged, still what non-browser clients
 like a future mobile app or server-to-server callers should use)
 OR an httpOnly `access_token` cookie set by /auth/login,
-/auth/signup, and /auth/refresh (see routers/auth_v2.py). The
-browser frontend now relies exclusively on the cookie — it no
+/auth/signup, and /auth/refresh (see routers/auth_v2.py).
+The browser frontend now relies exclusively on the cookie — it no
 longer has a JS-readable copy of the token to put in a header.
 ============================================================
 """
@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import HTTPException, Request, Security, status
+from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.supabase import get_supabase
 from app.context import AuthUser
+from app.core.error_handler import classify_exception, platform_error
+from app.core.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +42,8 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # ============================================================
 
 def validate_access_token(token: str) -> AuthUser:
-    """
-    Validate Supabase JWT.
-    """
-
+    """Validate a Supabase access token and return the authenticated user."""
     try:
-
         response = get_supabase().auth.get_user(token)
 
         if not response.user:
@@ -68,6 +65,8 @@ def validate_access_token(token: str) -> AuthUser:
         role = app_metadata.get("role") or user_metadata.get("role")
         plan = app_metadata.get("plan") or user_metadata.get("plan") or "free"
 
+        from app.services.auth.verification_service import resolve_email_verified
+
         return AuthUser(
             id=user.id,
             email=user.email or "",
@@ -75,20 +74,36 @@ def validate_access_token(token: str) -> AuthUser:
             role=role,
             plan=str(plan),
             is_active=True,
-            is_verified=user.email_confirmed_at is not None,
+            is_verified=resolve_email_verified(
+                user.id,
+                supabase_verified=user.email_confirmed_at is not None,
+            ),
         )
 
     except HTTPException:
         raise
 
     except Exception as exc:
+        # External auth-provider outages must not be mislabeled as bad
+        # credentials. platform_error() returns None for ordinary 4xx/domain
+        # failures and converts only platform/server failures.
+        platform_exc = platform_error(exc)
+        if platform_exc is not None:
+            raise platform_exc from exc
 
-        logger.exception(exc)
-
+        descriptor = classify_exception(exc)
+        logger.warning(
+            "Authentication token validation failed: %s (%s)",
+            type(exc).__name__,
+            descriptor.code,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed",
-        )
+            detail={
+                "code": descriptor.code,
+                "message": descriptor.message,
+            },
+        ) from exc
 
 
 # ============================================================
@@ -101,7 +116,6 @@ async def get_current_user(
         bearer_scheme,
     ),
 ) -> AuthUser:
-
     # Prefer an explicit Authorization header when present (API keys,
     # service-to-service calls, a future mobile client). Fall back to the
     # httpOnly access_token cookie, which is how the web frontend
@@ -116,3 +130,26 @@ async def get_current_user(
         )
 
     return validate_access_token(token)
+
+
+async def require_verified_user(
+    user: AuthUser = Depends(get_current_user),
+) -> AuthUser:
+    """Server-side denial for unverified accounts.
+
+    Applied at router level so frontend route filters are never the only
+    control. `/auth/*` and workspace onboarding stay reachable so the user can
+    finish verification first.
+    """
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "EMAIL_VERIFICATION_REQUIRED",
+                "message": (
+                    "Verify your email with the six-digit code before "
+                    "accessing this workspace."
+                ),
+            },
+        )
+    return user

@@ -11,13 +11,14 @@
 // button, closed by a backdrop tap or by navigating), matching the
 // same pattern already used on the marketing site's mobile nav.
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, Upload, Zap, LogOut, LayoutDashboard, FileText, ShieldAlert, BookOpen, ShoppingCart, CheckCircle2, Users, Sparkles, Settings, CreditCard, PlugZap, WalletCards, ArrowDownLeft, ArrowUpRight, CalendarClock, Target, Landmark } from "lucide-react";
+import { Menu, X, Upload, Zap, LogOut, LayoutDashboard, FileText, ShieldAlert, ShoppingCart, CheckCircle2, Users, Sparkles, Settings, CreditCard, Plug, Wallet, ArrowDown, ArrowUp, Calendar, Target, Building2 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppStore } from "@/store/useAppStore";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
+import ContextualBackButton from "./ContextualBackButton";
 
 const BUSINESS_NAV = [
   { section: "Workspace", items: [
@@ -26,7 +27,7 @@ const BUSINESS_NAV = [
     { href: "/dashboard/upload", label: "Receive document", icon: Upload },
   ]},
   { section: "Accounts payable", items: [
-    { href: "/dashboard/ap", label: "AP control center", icon: WalletCards },
+    { href: "/dashboard/ap", label: "AP control center", icon: Wallet },
     { href: "/dashboard/ap/exceptions", label: "Exceptions", icon: ShieldAlert },
     { href: "/dashboard/approvals", label: "Approvals", icon: CheckCircle2 },
     { href: "/dashboard/purchase-orders", label: "Purchase orders", icon: ShoppingCart },
@@ -34,7 +35,7 @@ const BUSINESS_NAV = [
   ]},
   { section: "Finance", items: [
     { href: "/dashboard/insights", label: "Insights", icon: Sparkles },
-    { href: "/integrations", label: "Integrations", icon: PlugZap },
+    { href: "/integrations", label: "Integrations", icon: Plug },
     { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
     { href: "/dashboard/settings", label: "Settings", icon: Settings },
   ]},
@@ -43,12 +44,12 @@ const BUSINESS_NAV = [
 const PERSONAL_NAV = [
   { section: "Personal", items: [
     { href: "/dashboard/personal", label: "Overview", icon: LayoutDashboard, exact: true },
-    { href: "/dashboard/personal/income", label: "Income", icon: ArrowDownLeft },
-    { href: "/dashboard/personal/expenses", label: "Expenses", icon: ArrowUpRight },
-    { href: "/dashboard/personal/budget", label: "Budget", icon: WalletCards },
-    { href: "/dashboard/personal/bills", label: "Bills", icon: CalendarClock },
+    { href: "/dashboard/personal/income", label: "Income", icon: ArrowDown },
+    { href: "/dashboard/personal/expenses", label: "Expenses", icon: ArrowUp },
+    { href: "/dashboard/personal/budget", label: "Budget", icon: Wallet },
+    { href: "/dashboard/personal/bills", label: "Bills", icon: Calendar },
     { href: "/dashboard/personal/goals", label: "Goals", icon: Target },
-    { href: "/dashboard/personal/accounts", label: "Accounts & net worth", icon: Landmark },
+    { href: "/dashboard/personal/accounts", label: "Accounts & net worth", icon: Building2 },
     { href: "/dashboard/personal/import", label: "Import statements", icon: FileText },
   ]},
   { section: "Account", items: [
@@ -203,8 +204,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
 
-        {/* Page content */}
-        <div className="dash-body">{children}</div>
+        {/* Shared contextual back navigation is available on every dashboard page. */}
+        <div className="dash-body">
+          <Suspense fallback={null}><ContextualBackButton /></Suspense>
+          {children}
+        </div>
       </main>
     </div>
   );

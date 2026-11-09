@@ -53,6 +53,7 @@ class AuditService:
         request_id: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
+        ai_triggered: bool = False,
     ):
         """
         Writes one audit_logs row.
@@ -75,6 +76,10 @@ class AuditService:
             "request_id": request_id,
             "ip_address": ip_address,
             "user_agent": user_agent,
+            # Explicitly populate the required audit domain field; AI-originated callers may opt in.
+            "ai_triggered": ai_triggered,
+            "diff": {},
+            "metadata": {},
         }
 
         return await self.repository.create_log(payload)

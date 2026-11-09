@@ -48,6 +48,9 @@ class Features(StrEnum):
 
     DOCUMENT_SHARING = "document_sharing"
 
+    # Reporting and transaction-currency support across multiple currencies.
+    MULTI_CURRENCY = "multi_currency"
+
     # ========================================================
     # AI
     # ========================================================

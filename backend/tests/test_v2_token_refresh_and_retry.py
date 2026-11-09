@@ -3,8 +3,9 @@ import pytest
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app2.workers.token_refresh_worker import TokenRefreshWorker
-from app2.workers.base import BaseWorker
+from app.core.error_handler import PlatformError
+from app.workers.token_refresh_worker import TokenRefreshWorker
+from app.workers.base import BaseWorker
 
 
 @pytest.mark.asyncio
@@ -47,7 +48,13 @@ async def test_base_worker_retries_and_returns_after_transient_failure(monkeypat
         async def run(self, **kwargs):
             self.calls += 1
             if self.calls < 3:
-                raise RuntimeError("transient")
+                raise PlatformError(
+                    "transient",
+                    code="PROVIDER_UNAVAILABLE",
+                    status_code=503,
+                    retryable=True,
+                    service="test",
+                )
             return {"ok": True}
 
     worker = Worker()

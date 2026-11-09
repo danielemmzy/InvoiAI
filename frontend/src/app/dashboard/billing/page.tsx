@@ -177,7 +177,7 @@ function BillingContent() {
         <PageError title="Couldn't load the plan catalog" onRetry={refetchPlans} />
       ) : (
         <div className="pricing-grid tiers-5" style={{ marginTop: 20 }}>
-          {(plans || []).map((plan) => (
+          {(Array.isArray(plans) ? plans : []).map((plan) => (
             <PlanCard
               key={plan.id}
               plan={plan}

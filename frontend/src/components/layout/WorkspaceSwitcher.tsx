@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Check, ChevronDown, Plus, UserRound } from "lucide-react";
+import { Building2, Check, ChevronDown, Plus, User } from "lucide-react";
 import { useWorkspaces, useSwitchWorkspace } from "@/hooks/useWorkspaces";
 import { useRouter } from "next/navigation";
 import { useAppStore } from "@/store/useAppStore";
@@ -15,7 +15,7 @@ export default function WorkspaceSwitcher() {
 
   return <div className="workspace-switcher">
     <button className="workspace-trigger" onClick={() => setOpen((v) => !v)} aria-expanded={open} disabled={isLoading}>
-      <span className={`workspace-mini-icon ${active?.type === "personal" ? "personal" : "business"}`}>{active?.type === "personal" ? <UserRound size={15}/> : <Building2 size={15}/>}</span>
+      <span className={`workspace-mini-icon ${active?.type === "personal" ? "personal" : "business"}`}>{active?.type === "personal" ? <User size={15}/> : <Building2 size={15}/>}</span>
       <span className="workspace-trigger-copy"><strong>{active?.name || "Workspace"}</strong><small>{active?.type === "personal" ? "Personal" : "Business"}</small></span>
       <ChevronDown size={15}/>
     </button>
@@ -24,7 +24,7 @@ export default function WorkspaceSwitcher() {
       <div className="workspace-menu">
         <div className="workspace-menu-title">Your workspaces</div>
         {data.map((workspace) => <button key={workspace.id} className="workspace-menu-item" onClick={() => { setOpen(false); switchWorkspace(workspace); }}>
-          <span className={`workspace-mini-icon ${workspace.type}`}>{workspace.type === "personal" ? <UserRound size={15}/> : <Building2 size={15}/>}</span>
+          <span className={`workspace-mini-icon ${workspace.type}`}>{workspace.type === "personal" ? <User size={15}/> : <Building2 size={15}/>}</span>
           <span><strong>{workspace.name}</strong><small>{workspace.type === "personal" ? "Personal" : "Business"} · {workspace.role}</small></span>
           {active?.id === workspace.id && <Check size={16}/>} 
         </button>)}

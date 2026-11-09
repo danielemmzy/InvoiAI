@@ -1,11 +1,15 @@
 from __future__ import annotations
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 from pydantic import Field
 from app.models.domain.base import DomainModel, TimestampedEntity
-from app.core.enum.ap import APCodingSource, APCodingStatus, APDimensionType, APExceptionStatus, APExceptionType
+from app.core.enum.ap import (
+    APCodingSource, APCodingStatus, APDimensionType, APExceptionStatus, APExceptionType,
+    ApprovalRuleScope, ApproverType, PaymentAuthorizationStatus, PaymentInstructionStatus,
+    VendorDocumentRequestType, VendorDocumentRequestStatus,
+)
 
 class ChartOfAccount(TimestampedEntity):
     org_id: UUID
@@ -133,3 +137,136 @@ class InvoiceException(TimestampedEntity):
     resolution_note: str | None = None
     resolved_by: UUID | None = None
     resolved_at: datetime | None = None
+
+# ============================================================
+# Approval Groups (pooled approvers)
+# ============================================================
+
+class ApprovalGroup(TimestampedEntity):
+    org_id: UUID
+    name: str
+    description: str | None = None
+    created_by: UUID | None = None
+
+class ApprovalGroupMember(DomainModel):
+    id: UUID
+    group_id: UUID
+    user_id: UUID
+    added_at: datetime
+
+# ============================================================
+# AP Approval Rules (routing engine)
+# ============================================================
+
+class ApprovalRule(TimestampedEntity):
+    org_id: UUID
+    name: str
+    description: str | None = None
+    is_active: bool = True
+    priority: int = 100
+    scope: ApprovalRuleScope = ApprovalRuleScope.BILL
+    min_amount: Decimal | None = None
+    max_amount: Decimal | None = None
+    vendor_id: UUID | None = None
+    department: str | None = None
+    cost_center: str | None = None
+    location: str | None = None
+    document_type: str | None = None
+    risk_level: str | None = None
+    requires_po: bool | None = None
+    step_number: int = 1
+    step_name: str = "Approval"
+    execution_mode: str = "sequential"
+    approver_type: ApproverType = ApproverType.ROLE
+    approver_id: UUID | None = None
+    approver_role: str | None = None
+    approver_group_id: UUID | None = None
+    conditions: dict[str, Any] | None = None
+    actions: list[dict[str, Any]] | None = None
+    created_by: UUID | None = None
+
+# ============================================================
+# Payment Authorization (the payment-release control gate)
+# ============================================================
+
+class PaymentAuthorization(TimestampedEntity):
+    org_id: UUID
+    document_id: UUID
+    status: PaymentAuthorizationStatus = PaymentAuthorizationStatus.NEEDS_REVIEW
+    blocked_reasons: list[str] = Field(default_factory=list)
+    checks: dict[str, Any] = Field(default_factory=dict)
+    authorized_by: UUID | None = None
+    authorized_at: datetime | None = None
+    override_by: UUID | None = None
+    override_at: datetime | None = None
+    override_reason: str | None = None
+
+# ============================================================
+# Invoice Comments (tagging / mentions)
+# ============================================================
+
+class InvoiceComment(DomainModel):
+    id: UUID
+    org_id: UUID
+    document_id: UUID
+    author_id: UUID
+    body: str
+    mentioned_user_ids: list[UUID] = Field(default_factory=list)
+    created_at: datetime
+
+# ============================================================
+# Payment Instruction (the actual payment record — separate
+# from PaymentAuthorization, which is the compliance gate)
+# ============================================================
+
+class PaymentInstruction(TimestampedEntity):
+    org_id: UUID
+    document_id: UUID
+    vendor_id: UUID | None = None
+    amount: Decimal
+    currency: str = "USD"
+    payment_method: str | None = None
+    scheduled_date: date | None = None
+    requested_by: UUID | None = None
+    approved_by: UUID | None = None
+    authorized_by: UUID | None = None
+    approval_workflow_id: UUID | None = None
+    provider: str | None = None
+    provider_payment_id: str | None = None
+    idempotency_key: str
+    status: PaymentInstructionStatus = PaymentInstructionStatus.REQUESTED
+    failure_reason: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+class PaymentInstructionEvent(DomainModel):
+    id: UUID
+    org_id: UUID
+    payment_instruction_id: UUID
+    from_status: str | None = None
+    to_status: str
+    actor_id: UUID | None = None
+    reason: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+# ============================================================
+# Vendor document requests (W-9 / bank-change verification)
+# ============================================================
+
+class VendorDocumentRequest(DomainModel):
+    id: UUID
+    org_id: UUID
+    vendor_id: UUID
+    request_type: VendorDocumentRequestType
+    status: VendorDocumentRequestStatus = VendorDocumentRequestStatus.PENDING
+    token: str
+    requested_by: UUID | None = None
+    requested_at: datetime
+    submitted_at: datetime | None = None
+    document_url: str | None = None
+    submitted_data: dict[str, Any] = Field(default_factory=dict)
+    verified_by: UUID | None = None
+    verified_at: datetime | None = None
+    rejection_reason: str | None = None
+    expires_at: datetime
+    updated_at: datetime

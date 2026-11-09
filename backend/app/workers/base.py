@@ -6,6 +6,8 @@ from abc import ABC
 from abc import abstractmethod
 from typing import Any
 
+from app.core.error_handler import classify_exception
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +49,10 @@ class BaseWorker(ABC):
         """
 
         last_exception = None
+        self._current_attempt = 0
 
         for attempt in range(1, self.retries + 1):
+            self._current_attempt = attempt
 
             try:
 
@@ -73,19 +77,28 @@ class BaseWorker(ABC):
             except Exception as exc:
 
                 last_exception = exc
+                descriptor = classify_exception(exc)
 
                 logger.exception(
-                    "%s failed (attempt %s/%s)",
+                    "%s failed (attempt %s/%s): code=%s service=%s retryable=%s",
                     self.__class__.__name__,
                     attempt,
                     self.retries,
+                    descriptor.code,
+                    descriptor.service,
+                    descriptor.retryable,
                 )
 
-                if attempt < self.retries:
+                # Retry only failures that are actually classified as
+                # transient/platform problems. Invalid documents, bad input,
+                # programming errors and other permanent failures should not
+                # trigger three identical expensive AI/storage operations.
+                if not descriptor.retryable or attempt >= self.retries:
+                    break
 
-                    await asyncio.sleep(
-                        self.retry_delay,
-                    )
+                await asyncio.sleep(
+                    self.retry_delay,
+                )
 
         assert last_exception is not None
         raise last_exception

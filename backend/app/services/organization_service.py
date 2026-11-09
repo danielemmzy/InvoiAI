@@ -49,7 +49,8 @@ from app.repositories.organization.usage_repository import (
 from app.core.permissions import get_permissions
 from app.schemas.workspace import WorkspaceSummary
 from app.core.enum.database import OrgRole, PlanType
-from app.core.plan import document_limit_for
+from app.core.plan import document_limit_for, supports_feature
+from app.core.features import Features
 
 
 logger = logging.getLogger(__name__)
@@ -245,7 +246,14 @@ class OrganizationService:
         # Build Context
         # --------------------------------------------------
 
+        effective_permissions = await self.get_permissions(
+            org_id=organization.id,
+            user_id=user.id,
+        )
+
         return OrganizationContext(
+
+            user_id=str(user.id),
 
             org_id=organization.id,
 
@@ -256,7 +264,7 @@ class OrganizationService:
             plan=organization.plan,
 
             role=membership.role,
-            permissions=get_permissions(membership.role),
+            permissions=effective_permissions,
 
             document_limit=organization.document_limit,
 
@@ -341,6 +349,20 @@ class OrganizationService:
         company_size: str | None = None,
     ) -> WorkspaceSummary:
         workspace_type = workspace_type.lower()
+        currency = str(currency or "USD").strip().upper()
+        country = str(country).strip().upper() if country else None
+
+        if len(currency) != 3 or not currency.isalpha():
+            raise HTTPException(
+                status_code=400,
+                detail="Currency must be a valid 3-letter ISO currency code.",
+            )
+
+        if country and len(country) != 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Country must be a 2-letter ISO country code.",
+            )
 
         if workspace_type not in {"personal", "business"}:
             raise HTTPException(
@@ -388,12 +410,22 @@ class OrganizationService:
             f"{str(org_id)[:8]}"
         )
 
+        plan = PlanType.FREE
+
+        # The workspace always has one reporting/default currency.
+        # Multi-currency is a separate plan capability. A newly-created
+        # Free workspace therefore starts with multi_currency=False even
+        # when its default currency is NGN/USD/etc.
         features = {
             "personal_mode": workspace_type == "personal",
             "ai_enabled": True,
             "copilot_enabled": True,
             "analytics_enabled": True,
             "embeddings_enabled": True,
+            "multi_currency": supports_feature(
+                plan,
+                Features.MULTI_CURRENCY,
+            ),
         }
 
         organization = await self.organizations.create_organization(
@@ -401,7 +433,7 @@ class OrganizationService:
                 "id": org_id,
                 "name": display_name,
                 "slug": slug,
-                "plan": PlanType.FREE.value,
+                "plan": plan.value,
                 "industry": (
                     None
                     if workspace_type == "personal"
@@ -419,7 +451,7 @@ class OrganizationService:
                 "website": None,
                 "stripe_customer_id": None,
                 "document_limit": document_limit_for(
-                    PlanType.FREE
+                    plan
                 ),
                 "features": features,
                 "created_by": user.id,
@@ -580,9 +612,26 @@ class OrganizationService:
             user_id=user_id,
         )
 
-        return get_permissions(
-            member.role,
-        )
+        permissions = set(get_permissions(member.role))
+        # Normalized organization access profiles are additive. If the
+        # migration has not been installed yet, fall back to legacy RBAC.
+        try:
+            row = (
+                self.organizations.db.table("organization_roles")
+                .select("permissions")
+                .eq("org_id", str(org_id))
+                .eq("id", str(member.access_role_id))
+                .limit(1)
+                .execute()
+                .data
+            ) if member.access_role_id else []
+            if row:
+                permissions.update(str(p) for p in (row[0].get("permissions") or []) if p != "*")
+                if "*" in (row[0].get("permissions") or []):
+                    permissions.update(get_permissions("owner"))
+        except Exception:
+            logger.debug("Normalized organization role lookup unavailable; using legacy RBAC", exc_info=True)
+        return permissions
 
     async def has_permission(
         self,

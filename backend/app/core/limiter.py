@@ -17,6 +17,6 @@ def rate_limit_key(request):
 limiter = Limiter(
     key_func=rate_limit_key,
     default_limits=["200/minute"],
-    storage_uri=settings.redis_url,
+    storage_uri=("memory://" if settings.environment != "production" else settings.redis_url),
     headers_enabled=True,
 )

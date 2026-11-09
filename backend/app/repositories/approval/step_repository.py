@@ -60,6 +60,23 @@ class ApprovalStepRepository(BaseRepository):
             data,
         )
 
+    async def claim_group_step(self, step_id: UUID, user_id: UUID) -> ApprovalStep | None:
+        """Atomically claim an unclaimed pending group step."""
+        response = (
+            self.table()
+            .update({
+                "approver_id": str(user_id),
+                "claimed_by": str(user_id),
+                "claimed_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+            })
+            .eq("id", str(step_id))
+            .eq("decision", ApprovalDecision.PENDING.value)
+            .is_("claimed_by", "null")
+            .execute()
+        )
+        return self._one(response)
+
     async def delete_step(
         self,
         step_id: UUID,

@@ -4,8 +4,8 @@ from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app2.services.finance.planning_service import PlanningService
-from app2.core.enum.finance import OwnerType
+from app.services.finance.planning_service import PlanningService
+from app.core.enum.finance import OwnerType
 
 
 @pytest.mark.asyncio

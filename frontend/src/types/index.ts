@@ -25,7 +25,7 @@ export interface StructuredDocument {
   industry: string;
   document_type: string;
   sections: Record<string, unknown>;
-  raw_totals: Record<string, number>;
+  raw_totals: Record<string, number | string | null>;
   extraction_confidence: "high" | "medium" | "low";
 }
 
@@ -38,6 +38,9 @@ export interface UploadResponse {
   file_name?: string;
   industry?: string;
   pipeline_stage?: string;
+  processing_step?: string | null;
+  processing_message?: string | null;
+  processing_progress?: number | null;
   error_message?: string | null;
   created_at?: string;
 }
@@ -48,10 +51,34 @@ export interface HistoryItem {
   file_type: "pdf" | "image";
   industry: string;
   document_type?: string;
-  status: "processing" | "done" | "failed";
+  status: string;
+  pipeline_stage?: string | null;
+  processing_step?: string | null;
+  processing_message?: string | null;
+  processing_progress?: number | null;
+  error_message?: string | null;
   validation_warnings: string[];
   created_at?: string;
   sheets_url?: string;
+  vendor_name?: string | null;
+  document_number?: string | null;
+  document_date?: string | null;
+  due_date?: string | null;
+  currency?: string | null;
+  subtotal?: number | string | null;
+  total_amount?: number | string | null;
+  amount_due?: number | string | null;
+  total_quantity?: number | string | null;
+  line_item_count?: number;
+  account_id?: string | null;
+  account_code?: string | null;
+  account_name?: string | null;
+  classification_confidence?: number | string | null;
+  human_review_status?: string | null;
+  intelligence_status?: string | null;
+  capture_status?: string | null;
+  capture_progress?: number | null;
+  capture_error?: string | null;
 }
 
 export interface HistoryResponse {
@@ -59,6 +86,25 @@ export interface HistoryResponse {
   count: number;
   offset: number;
   limit: number;
+}
+
+export interface DocumentIntelligence {
+  document: {
+    id: string; file_name?: string; document_type?: string; status?: string; pipeline_stage?: string; workflow_route?: string | null;
+    processing_step?: string | null; processing_message?: string | null; processing_progress?: number | null; error_message?: string | null;
+    validation_warnings?: string[]; vendor_id?: string | null; vendor_name?: string | null; document_number?: string | null; document_date?: string | null; due_date?: string | null;
+    subtotal?: number | string | null; tax_rate?: number | string | null; tax_amount?: number | string | null; discount_amount?: number | string | null; total_amount?: number | string | null; amount_paid?: number | string | null; amount_due?: number | string | null;
+    currency?: string | null; payment_terms?: string | null; payment_method?: string | null; ap_enabled?: boolean;
+  };
+  ocr: { raw_text?: string; pages?: Array<{ page_number?: number; text?: string }>; tables_detected?: Array<Record<string, unknown>>; key_value_pairs?: Record<string, unknown>; page_count?: number; confidence_score?: number | string; engine?: string; engine_version?: string; processing_ms?: number; } | null;
+  line_items: Array<Record<string, unknown>>;
+  structured_data?: Record<string, unknown> | null;
+  analysis: any | null;
+  embedding: { model_used?: string; created_at?: string } | null;
+  vendor: any | null;
+  vendor_embedding_ready: boolean;
+  ready: boolean;
+  actions: string[];
 }
 
 export interface Industry {
@@ -89,6 +135,7 @@ export interface AuthResponse {
   email: string;
   org_id?: string | null;
   plan?: string | null;
+  is_verified?: boolean;
 }
 
 export interface SignupResponse {
@@ -96,6 +143,20 @@ export interface SignupResponse {
   email?: string;
   plan?: string;
   requires_email_verification?: boolean;
+  verification_email_sent?: boolean;
+  otp_expires_in_seconds?: number | null;
+  resend_cooldown_seconds?: number | null;
+}
+
+export interface VerifyOtpResponse {
+  verified: boolean;
+  message: string;
+}
+
+export interface ResendOtpResponse {
+  message: string;
+  code_sent: boolean;
+  retry_after_seconds: number | null;
 }
 
 export interface SheetsExportResponse {

@@ -48,9 +48,19 @@ class AnalysisRepository(BaseRepository):
     ):
         """
         Persist a completed AI analysis.
+
+        document_id is unique, so analysis creation must be
+        idempotent when workers retry.
         """
 
-        return self.table().insert(payload).execute()
+        return (
+            self.table()
+            .upsert(
+                payload,
+                on_conflict="document_id",
+            )
+            .execute()
+        )
 
     async def update_analysis(
         self,
@@ -163,7 +173,7 @@ class AnalysisRepository(BaseRepository):
             .update(
                 {
                     "reviewed_by": reviewer_id,
-                    "reviewed_at": datetime.now(UTC),
+                    "reviewed_at": datetime.now(UTC).isoformat(),
                     "final_decision": decision,
                     "override_reason": override_reason,
                 }
@@ -319,3 +329,4 @@ class AnalysisRepository(BaseRepository):
         )
 
         return response.data.get("reviewed_at") is not None
+

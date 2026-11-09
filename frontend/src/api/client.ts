@@ -33,9 +33,31 @@ function isBrowser(): boolean {
 function isAuthEndpoint(
   url: string,
 ): boolean {
-  return /\/auth\/(login|signup|refresh|forgot-password|resend-verification|reset-password)\/?$/.test(
+  return /\/auth\/(login|signup|refresh|forgot-password|resend-verification|resend-otp|verify-otp|reset-password)\/?$/.test(
     url,
   );
+}
+
+const RETURN_TO_KEY = "invoiai:return-after-login";
+
+/** Remember the current protected screen before an expired session sends the user to login. */
+export function rememberPostLoginPath(): void {
+  if (!isBrowser()) return;
+  const { pathname, search, hash } = window.location;
+  if (!pathname || pathname.startsWith("/login") || pathname.startsWith("/signup") || pathname.startsWith("/forgot-password") || pathname.startsWith("/reset-password") || pathname.startsWith("/verify-email")) return;
+  if (!pathname.startsWith("/dashboard") && !pathname.startsWith("/workspace")) return;
+  try { sessionStorage.setItem(RETURN_TO_KEY, `${pathname}${search}${hash}`); } catch { /* session storage may be unavailable */ }
+}
+
+/** Consume only a safe same-origin application path; never accept absolute URLs. */
+export function consumePostLoginPath(): string | null {
+  if (!isBrowser()) return null;
+  try {
+    const path = sessionStorage.getItem(RETURN_TO_KEY);
+    sessionStorage.removeItem(RETURN_TO_KEY);
+    if (!path || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/login") || path.startsWith("/signup")) return null;
+    return path;
+  } catch { return null; }
 }
 
 function removeLegacyBrowserTokens(): void {
@@ -67,6 +89,13 @@ export function getErrorMessage(
       detail.trim()
     ) {
       return detail;
+    }
+
+    if (detail && typeof detail === "object") {
+      const message = (detail as { message?: unknown }).message;
+      if (typeof message === "string" && message.trim()) {
+        return message;
+      }
     }
 
     if (
@@ -194,6 +223,7 @@ client.interceptors.response.use(
 
     original._sessionHandled = true;
 
+    rememberPostLoginPath();
     clearAuthStorage();
 
     if (

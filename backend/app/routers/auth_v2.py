@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from app.schemas.auth import (
@@ -7,13 +9,18 @@ from app.schemas.auth import (
     LoginRequest,
     RefreshTokenRequest,
     AuthResponse,
+    ResendOtpRequest,
     SignupResponse,
     UserProfileResponse,
+    VerifyOtpRequest,
 )
 from app.core.auth import get_current_user, AuthUser
 from app.core.container import get_container
 from app.core.limiter import limiter
 from app.core.config import settings
+from app.core.error_handler import platform_error
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -97,12 +104,18 @@ def _response(r) -> AuthResponse:
             detail="Authentication failed",
         )
 
+    from app.services.auth.verification_service import resolve_email_verified
+
     return AuthResponse(
         access_token=r.session.access_token,
         refresh_token=r.session.refresh_token,
         user_id=str(r.user.id),
         email=r.user.email,
         plan="free",
+        is_verified=resolve_email_verified(
+            r.user.id,
+            supabase_verified=r.user.email_confirmed_at is not None,
+        ),
     )
 
 
@@ -120,41 +133,59 @@ async def signup(
     response: Response,
     body: SignUpRequest,
 ):
+    metadata = {
+        "first_name": body.first_name,
+        "last_name": body.last_name,
+    }
+    if body.mobile:
+        metadata["mobile"] = body.mobile
+
     try:
         result = await get_container().auth_service.signup(
             body.email,
             body.password,
+            metadata,
         )
 
     except Exception as exc:
+        platform_exc = platform_error(exc)
+        if platform_exc is not None:
+            raise platform_exc from exc
         raise HTTPException(
             status_code=400,
-            detail="Signup failed",
+            detail="Signup could not be completed.",
         ) from exc
 
-    # Email confirmation may be enabled, in which case Supabase
-    # creates the user without issuing a session. This is still a
-    # successful signup and MUST be returned as HTTP 200 JSON.
     if not result.user:
         raise HTTPException(status_code=400, detail="Signup failed")
 
-    if not result.session:
-        return SignupResponse(
-            user_id=str(result.user.id),
+    # Whether or not Supabase issued a session, access waits for the
+    # six-digit email code. No auth cookies are set here on purpose.
+    otp: dict | None = None
+    try:
+        otp = await get_container().email_verification_service.issue(
+            user_id=result.user.id,
             email=result.user.email or body.email,
-            plan="free",
-            requires_email_verification=True,
+            first_name=body.first_name,
         )
-
-    _set_auth_cookies(response, result.session.access_token, result.session.refresh_token)
+    except Exception:
+        logger.exception("signup_verification_challenge_failed")
+        # The account exists; the user can request a new code from the
+        # verification screen instead of losing the signup.
+        otp = None
 
     return SignupResponse(
-        access_token=result.session.access_token,
-        refresh_token=result.session.refresh_token,
         user_id=str(result.user.id),
         email=result.user.email or body.email,
         plan="free",
-        requires_email_verification=False,
+        requires_email_verification=True,
+        verification_email_sent=bool(otp and otp.get("code_sent")),
+        otp_expires_in_seconds=(
+            int(otp["expires_in_seconds"]) if otp else None
+        ),
+        resend_cooldown_seconds=(
+            int(otp["resend_cooldown_seconds"]) if otp else None
+        ),
     )
 
 
@@ -179,6 +210,21 @@ async def login(
         )
 
     except Exception as exc:
+        platform_exc = platform_error(exc)
+        if platform_exc is not None:
+            raise platform_exc from exc
+        text = str(exc).lower()
+        if "confirm" in text or "verified" in text:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "EMAIL_VERIFICATION_REQUIRED",
+                    "message": (
+                        "Verify your email with the six-digit code before "
+                        "signing in."
+                    ),
+                },
+            ) from exc
         raise HTTPException(
             status_code=401,
             detail="Invalid email or password",
@@ -222,6 +268,9 @@ async def refresh(
         )
 
     except Exception as exc:
+        platform_exc = platform_error(exc)
+        if platform_exc is not None:
+            raise platform_exc from exc
         _clear_auth_cookies(response)
         raise HTTPException(
             status_code=401,
@@ -284,39 +333,68 @@ async def forgot_password(
 
 
 # ============================================================
-# RESEND VERIFICATION
+# SIX-DIGIT EMAIL OTP
+# ============================================================
+
+@router.post("/verify-otp")
+@limiter.limit("10/minute")
+async def verify_otp(
+    request: Request,
+    response: Response,
+    body: VerifyOtpRequest,
+):
+    result = await get_container().email_verification_service.verify(
+        email=str(body.email),
+        code=body.code,
+    )
+
+    if result.status == "verified":
+        return {
+            "verified": True,
+            "message": result.message,
+        }
+
+    status_code = {
+        "locked": 423,
+        "delivery_failed": 503,
+    }.get(result.status, 400)
+
+    raise HTTPException(
+        status_code=status_code,
+        detail={
+            "code": f"OTP_{result.status.upper()}",
+            "message": result.message,
+        },
+    )
+
+
+@router.post("/resend-otp")
+@limiter.limit("3/minute")
+async def resend_otp(
+    request: Request,
+    response: Response,
+    body: ResendOtpRequest,
+):
+    # Always returns the same shape, whether or not the account exists.
+    return await get_container().email_verification_service.resend(
+        email=str(body.email),
+    )
+
+
+# ============================================================
+# RESEND VERIFICATION (migration alias for the old link flow)
 # ============================================================
 
 @router.post("/resend-verification")
-@limiter.limit("5/minute")
+@limiter.limit("3/minute")
 async def resend_verification(
     request: Request,
     response: Response,
-    body: dict,
+    body: ResendOtpRequest,
 ):
-    email = str(
-        body.get("email", "")
-    ).strip().lower()
-
-    if "@" not in email:
-        raise HTTPException(
-            status_code=400,
-            detail="Enter a valid email address",
-        )
-
-    try:
-        await get_container().auth_service.resend_signup_confirmation(
-            email
-        )
-    except Exception:
-        pass
-
-    return {
-        "message": (
-            "If the account can receive verification email, "
-            "a new link has been sent."
-        )
-    }
+    return await get_container().email_verification_service.resend(
+        email=str(body.email),
+    )
 
 
 # ============================================================
@@ -348,6 +426,9 @@ async def reset_password(
         )
 
     except Exception as exc:
+        platform_exc = platform_error(exc)
+        if platform_exc is not None:
+            raise platform_exc from exc
         raise HTTPException(
             status_code=400,
             detail=(

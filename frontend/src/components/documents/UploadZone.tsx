@@ -1,195 +1,992 @@
 "use client";
-// ─────────────────────────────────────────────
-// UploadZone — drag-and-drop file upload
-// ─────────────────────────────────────────────
 
-import { useCallback, useState } from "react";
-import { useDropzone } from "react-dropzone";
-import { Upload, FileText, X, Loader2, ChevronDown } from "lucide-react";
-import { useUpload } from "@/hooks/useUpload";
+import {
+  useCallback,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  useDropzone,
+} from "react-dropzone";
+
+import Link from "next/link";
+
+import {
+  FileText,
+  ReceiptText,
+  FileStack,
+  ScanLine,
+  X,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  Upload as UploadIcon,
+  Sparkles,
+  ArrowRight,
+} from "lucide-react";
+
+import DashboardLayout from "@/components/layout/DashboardLayout";
+
+import {
+  useUpload,
+  useBatchUpload,
+} from "@/hooks/useUpload";
+
 import { useIndustries } from "@/hooks/useDocuments";
+import { usePlanCatalog } from "@/hooks/useBilling";
 import { useAppStore } from "@/store/useAppStore";
 
-export default function UploadZone() {
-  const [file, setFile] = useState<File | null>(null);
+import DuplicateUploadDialog from "@/components/documents/DuplicateUploadDialog";
+
+export default function UploadPage() {
+  const [files, setFiles] = useState<File[]>([]);
   const [industry, setIndustry] = useState("general");
-  const [showIndustries, setShowIndustries] = useState(false);
-  const { upload, isUploading } = useUpload();
+
   const { data: industries } = useIndustries();
-  const uploadProgress = useAppStore((s) => s.uploadProgress);
+  const { data: plans } = usePlanCatalog();
 
-  const onDrop = useCallback((accepted: File[]) => {
-    if (accepted[0]) setFile(accepted[0]);
-  }, []);
+  const user = useAppStore(
+    (state) => state.user
+  );
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const uploadProgress = useAppStore(
+    (state) => state.uploadProgress
+  );
+
+  const currentPlan = (Array.isArray(plans) ? plans : []).find(
+    (plan) =>
+      plan.id === (user?.plan || "free")
+  );
+
+  const batchLimit =
+    currentPlan?.max_batch_upload ?? 1;
+
+  /*
+   * SINGLE UPLOAD
+   *
+   * Keep the hook's existing public API:
+   * duplicate
+   * confirmDuplicate
+   * cancelDuplicate
+   */
+  const {
+    upload,
+    isUploading: isSingleUploading,
+    duplicate: singleDuplicate,
+    confirmDuplicate: confirmSingleDuplicate,
+    cancelDuplicate: cancelSingleDuplicate,
+  } = useUpload();
+
+  /*
+   * BATCH UPLOAD
+   *
+   * Keep the hook's existing public API.
+   */
+  const {
+    uploadBatch,
+    isUploading: isBatchUploading,
+    result,
+    duplicate: batchDuplicate,
+    confirmDuplicate: confirmBatchDuplicate,
+    cancelDuplicate: cancelBatchDuplicate,
+  } = useBatchUpload();
+
+  const isUploading =
+    isSingleUploading ||
+    isBatchUploading;
+
+  /*
+   * The two duplicate prompt types are intentionally
+   * different:
+   *
+   * Single:
+   * {
+   *   file: File;
+   *   ...
+   * }
+   *
+   * Batch:
+   * {
+   *   files: File[];
+   *   duplicateFiles: string[];
+   *   ...
+   * }
+   *
+   * Therefore we do NOT merge them into one ambiguous
+   * object and then call duplicate.files.
+   */
+  const duplicate =
+    singleDuplicate ||
+    batchDuplicate;
+
+  const onDrop = useCallback(
+    (acceptedFiles: File[]) => {
+      setFiles((previous) => {
+        const combined = [
+          ...previous,
+          ...acceptedFiles,
+        ];
+
+        if (
+          combined.length >
+          batchLimit
+        ) {
+          return combined.slice(
+            0,
+            batchLimit
+          );
+        }
+
+        return combined;
+      });
+    },
+    [batchLimit]
+  );
+
+  const {
+    getRootProps,
+    getInputProps,
+    isDragActive,
+  } = useDropzone({
     onDrop,
+
     accept: {
       "application/pdf": [".pdf"],
-      "image/jpeg": [".jpg", ".jpeg"],
+      "image/jpeg": [
+        ".jpg",
+        ".jpeg",
+      ],
       "image/png": [".png"],
       "image/webp": [".webp"],
     },
-    maxFiles: 1,
+
+    maxFiles: batchLimit,
+
     disabled: isUploading,
   });
 
-  const selectedIndustry = industries?.find((i) => i.value === industry);
-
-  const handleSubmit = () => {
-    if (!file) return;
-    upload({ file, industry });
+  const removeFile = (
+    index: number
+  ) => {
+    setFiles((previous) =>
+      previous.filter(
+        (_, i) => i !== index
+      )
+    );
   };
 
+  const clearFiles = () => {
+    if (!isUploading) {
+      setFiles([]);
+    }
+  };
+
+  const atLimit =
+    files.length >= batchLimit;
+
+  const totalSizeMb = useMemo(
+    () =>
+      files.reduce(
+        (total, file) =>
+          total + file.size,
+        0
+      ) /
+      1024 /
+      1024,
+    [files]
+  );
+
+  /*
+   * Send selected files.
+   */
+  const handleSend = () => {
+    if (
+      !files.length ||
+      isUploading
+    ) {
+      return;
+    }
+
+    /*
+     * One file → normal document upload.
+     */
+    if (files.length === 1) {
+      upload({
+        file: files[0],
+        industry,
+        documentType: "unknown",
+      });
+
+      return;
+    }
+
+    /*
+     * Multiple files → batch endpoint.
+     */
+    uploadBatch({
+      files,
+      industry,
+    });
+  };
+
+  /*
+   * Build duplicate names safely.
+   *
+   * SINGLE DUPLICATE:
+   * singleDuplicate.file.name
+   *
+   * BATCH DUPLICATE:
+   * batchDuplicate.duplicateFiles
+   */
+  const duplicateNames: string[] =
+    singleDuplicate
+      ? [singleDuplicate.file.name]
+      : batchDuplicate?.duplicateFiles ??
+        [];
+
+  /*
+   * Calculate progress defensively.
+   *
+   * uploadProgress may be undefined/null
+   * depending on the current store state.
+   */
+  const progress =
+    typeof uploadProgress === "number"
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            uploadProgress
+          )
+        )
+      : 0;
+
   return (
-    <div className="max-w-2xl mx-auto">
-      {/* Drop zone */}
+    <DashboardLayout>
       <div
-        {...getRootProps()}
-        className="rounded-xl cursor-pointer transition-all duration-200"
         style={{
-          border: `2px dashed ${isDragActive ? "#C8922A" : file ? "#C8922A" : "#E2DDD4"}`,
-          background: isDragActive ? "#FFF8F0" : file ? "#FFFDF9" : "#FFFFFF",
-          padding: "56px 40px",
-          textAlign: "center",
+          maxWidth: 760,
         }}
       >
-        <input {...getInputProps()} />
-
-        {file ? (
-          <div className="flex flex-col items-center gap-3">
-            <div
-              className="w-14 h-14 rounded-xl flex items-center justify-center"
-              style={{ background: "#F5E6C8" }}
-            >
-              <FileText size={24} color="#C8922A" />
-            </div>
-            <div>
-              <p className="font-medium text-sm" style={{ color: "#1A1916" }}>
-                {file.name}
-              </p>
-              <p className="text-xs mt-0.5" style={{ color: "#6B6860" }}>
-                {(file.size / 1024 / 1024).toFixed(2)} MB
-              </p>
-            </div>
-            <button
-              onClick={(e) => { e.stopPropagation(); setFile(null); }}
-              className="flex items-center gap-1 text-xs px-3 py-1 rounded-md"
-              style={{ color: "#C0392B", background: "#FDECEA" }}
-            >
-              <X size={12} />
-              Remove
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-4">
-            <div
-              className="w-14 h-14 rounded-xl flex items-center justify-center"
-              style={{ background: "#F7F4EE", border: "0.5px solid #E2DDD4" }}
-            >
-              <Upload size={22} color="#6B6860" />
-            </div>
-            <div>
-              <p className="font-medium text-sm" style={{ color: "#1A1916" }}>
-                {isDragActive ? "Drop it here" : "Drop your invoice here"}
-              </p>
-              <p className="text-xs mt-1" style={{ color: "#6B6860" }}>
-                PDF, JPG, PNG or WEBP · up to 10MB
-              </p>
-            </div>
-            <div
-              className="text-xs px-4 py-2 rounded-lg"
-              style={{ border: "0.5px solid #E2DDD4", color: "#6B6860" }}
-            >
-              or click to browse files
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Industry selector */}
-      <div className="mt-4 relative">
-        <div className="text-xs font-medium mb-2" style={{ color: "#6B6860" }}>
-          Select industry
+        <div className="section-label">
+          §01 Intake / Universal document inbox
         </div>
-        <button
-          onClick={() => setShowIndustries(!showIndustries)}
-          className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm transition-all"
+
+        <div className="dash-title serif">
+          Send InvoiAI anything.
+        </div>
+
+        <div
+          className="dash-subtitle"
           style={{
-            background: "#FFFFFF",
-            border: "0.5px solid #E2DDD4",
-            color: "#1A1916",
+            marginBottom: 24,
           }}
         >
-          <span>{selectedIndustry?.label || "General"}</span>
-          <ChevronDown size={16} color="#6B6860" className={showIndustries ? "rotate-180" : ""} style={{ transition: "transform 0.2s" }} />
-        </button>
+          Invoices, receipts, purchase orders,
+          delivery notes, contracts and other
+          documents are classified automatically.
+          Upload up to {batchLimit} at once on
+          your{" "}
+          {currentPlan?.display_name ||
+            "current"}{" "}
+          plan.
+        </div>
 
-        {showIndustries && (
+        {/* =====================================================
+            INDUSTRY
+            ===================================================== */}
+
+        <div
+          className="card"
+          style={{
+            padding: 18,
+            marginBottom: 18,
+          }}
+        >
           <div
-            className="absolute top-full left-0 right-0 mt-1 rounded-lg overflow-auto z-20"
             style={{
-              background: "#FFFFFF",
-              border: "0.5px solid #E2DDD4",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
-              maxHeight: 280,
+              display: "flex",
+              alignItems: "center",
+              justifyContent:
+                "space-between",
+              gap: 16,
+              flexWrap: "wrap",
             }}
           >
-            {(industries || []).map((ind) => (
-              <button
-                key={ind.value}
-                onClick={() => { setIndustry(ind.value); setShowIndustries(false); }}
-                className="w-full text-left px-4 py-2.5 text-sm transition-all"
+            <div>
+              <div className="card-title">
+                Document context
+              </div>
+
+              <div
+                className="dash-subtitle"
                 style={{
-                  background: industry === ind.value ? "#F7F4EE" : "transparent",
-                  color: industry === ind.value ? "#C8922A" : "#1A1916",
-                  fontWeight: industry === ind.value ? 500 : 400,
-                  borderBottom: "0.5px solid #F0EDE6",
+                  fontSize: 12,
+                  marginTop: 4,
                 }}
               >
-                {ind.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+                Help InvoiAI route and classify
+                your documents accurately.
+              </div>
+            </div>
 
-      {/* Progress bar */}
-      {isUploading && uploadProgress > 0 && (
-        <div className="mt-4">
-          <div className="flex justify-between text-xs mb-1.5" style={{ color: "#6B6860" }}>
-            <span>Processing document...</span>
-            <span>{uploadProgress}%</span>
-          </div>
-          <div className="h-1.5 rounded-full" style={{ background: "#E2DDD4" }}>
             <div
-              className="h-full rounded-full transition-all"
-              style={{ width: `${uploadProgress}%`, background: "#C8922A" }}
-            />
+              style={{
+                minWidth: 220,
+              }}
+            >
+              <label
+                htmlFor="upload-industry"
+                className="sr-only"
+              >
+                Industry
+              </label>
+
+              <select
+                id="upload-industry"
+                value={industry}
+                onChange={(event) =>
+                  setIndustry(
+                    event.target.value
+                  )
+                }
+                disabled={isUploading}
+                style={{
+                  width: "100%",
+                  height: 42,
+                  border:
+                    "1px solid #DDD6CC",
+                  borderRadius: 10,
+                  padding:
+                    "0 12px",
+                  background:
+                    "#FFFDF9",
+                  color:
+                    "#1A1916",
+                  outline: "none",
+                }}
+              >
+                <option value="general">
+                  General
+                </option>
+
+                {industries?.map(
+                  (item: any) => {
+                    const value =
+                      typeof item ===
+                      "string"
+                        ? item
+                        : item.value ||
+                          item.slug ||
+                          item.id;
+
+                    const label =
+                      typeof item ===
+                      "string"
+                        ? item
+                        : item.label ||
+                          item.name ||
+                          value;
+
+                    return (
+                      <option
+                        key={value}
+                        value={value}
+                      >
+                        {label}
+                      </option>
+                    );
+                  }
+                )}
+              </select>
+            </div>
           </div>
         </div>
-      )}
 
-      {/* Submit */}
-      <button
-        onClick={handleSubmit}
-        disabled={!file || isUploading}
-        className="w-full mt-4 py-3.5 rounded-xl text-sm font-medium transition-all flex items-center justify-center gap-2"
-        style={{
-          background: !file || isUploading ? "#E2DDD4" : "#1A1916",
-          color: !file || isUploading ? "#AAA8A0" : "#FFFFFF",
-          cursor: !file || isUploading ? "not-allowed" : "pointer",
-        }}
-      >
-        {isUploading ? (
-          <>
-            <Loader2 size={16} className="animate-spin" />
-            Extracting data...
-          </>
-        ) : (
-          "Extract structured data →"
+        {/* =====================================================
+            DOCUMENT TYPES
+            ===================================================== */}
+
+        <div
+          className="dash-grid"
+          style={{
+            marginBottom: 18,
+          }}
+        >
+          {[
+            [
+              FileText,
+              "Invoice / AP",
+            ],
+            [
+              ReceiptText,
+              "Receipt / Expense",
+            ],
+            [
+              FileStack,
+              "PO / Procurement",
+            ],
+            [
+              ScanLine,
+              "Other documents",
+            ],
+          ].map(
+            ([Icon, title]: any) => (
+              <div
+                className="card"
+                style={{
+                  padding: 18,
+                }}
+                key={title}
+              >
+                <Icon size={20} />
+
+                <div
+                  className="card-title"
+                  style={{
+                    marginTop: 10,
+                  }}
+                >
+                  {title}
+                </div>
+
+                <div
+                  className="dash-subtitle"
+                  style={{
+                    fontSize: 12,
+                  }}
+                >
+                  AI routes it to the
+                  right workflow.
+                </div>
+              </div>
+            )
+          )}
+        </div>
+
+        {/* =====================================================
+            DROP ZONE
+            ===================================================== */}
+
+        <div
+          {...getRootProps()}
+          className={`upload-dropzone${
+            isDragActive
+              ? " active"
+              : ""
+          }${
+            files.length
+              ? " has-file"
+              : ""
+          }${
+            atLimit
+              ? " at-limit"
+              : ""
+          }`}
+        >
+          <input
+            {...getInputProps()}
+          />
+
+          {files.length === 0 ? (
+            <>
+              <div className="upload-icon-wrap">
+                <UploadIcon size={20} />
+              </div>
+
+              <div className="upload-title">
+                {isDragActive
+                  ? "Drop them here"
+                  : `Drop up to ${batchLimit} documents here`}
+              </div>
+
+              <div className="upload-sub">
+                PDF, JPG, PNG or WEBP
+                · up to 10MB each
+              </div>
+
+              <div className="upload-browse">
+                or click to browse files
+              </div>
+            </>
+          ) : (
+            <div
+              className="upload-file-list"
+              onClick={(event) =>
+                event.stopPropagation()
+              }
+            >
+              {files.map(
+                (file, index) => (
+                  <div
+                    key={`${file.name}-${index}`}
+                    className="upload-file-row"
+                  >
+                    <FileText
+                      size={16}
+                    />
+
+                    <div className="upload-file-row-info">
+                      <div className="upload-file-row-name">
+                        {file.name}
+                      </div>
+
+                      <div className="upload-file-row-size">
+                        {(
+                          file.size /
+                          1024 /
+                          1024
+                        ).toFixed(2)}{" "}
+                        MB
+                      </div>
+                    </div>
+
+                    {!isUploading && (
+                      <button
+                        type="button"
+                        className="file-remove"
+                        onClick={() =>
+                          removeFile(
+                            index
+                          )
+                        }
+                        aria-label={`Remove ${file.name}`}
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </div>
+                )
+              )}
+
+              {!atLimit &&
+                !isUploading && (
+                  <button
+                    type="button"
+                    className="upload-add-more"
+                    onClick={(event) => {
+                      event.stopPropagation();
+
+                      (
+                        document.querySelector(
+                          ".upload-dropzone input"
+                        ) as HTMLInputElement | null
+                      )?.click();
+                    }}
+                  >
+                    + Add more (up to{" "}
+                    {batchLimit -
+                      files.length}{" "}
+                    more)
+                  </button>
+                )}
+
+              {atLimit && (
+                <div className="upload-limit-note">
+                  Reached your{" "}
+                  {currentPlan?.display_name ||
+                    "plan"}{" "}
+                  limit of{" "}
+                  {batchLimit} files
+                  per upload.{" "}
+                  <Link href="/dashboard/billing">
+                    Upgrade for a higher
+                    limit →
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* =====================================================
+            SELECTED FILE SUMMARY
+            ===================================================== */}
+
+        {files.length > 0 &&
+          !isUploading && (
+            <div
+              style={{
+                display: "flex",
+                alignItems:
+                  "center",
+                justifyContent:
+                  "space-between",
+                gap: 12,
+                marginTop: 12,
+                padding:
+                  "0 2px",
+                flexWrap: "wrap",
+              }}
+            >
+              <div
+                className="dash-subtitle"
+                style={{
+                  fontSize: 12,
+                }}
+              >
+                {files.length}{" "}
+                {files.length === 1
+                  ? "document"
+                  : "documents"}{" "}
+                selected ·{" "}
+                {totalSizeMb.toFixed(
+                  2
+                )}{" "}
+                MB total
+              </div>
+
+              <button
+                type="button"
+                onClick={clearFiles}
+                style={{
+                  border: 0,
+                  background:
+                    "transparent",
+                  padding: 0,
+                  cursor: "pointer",
+                  color:
+                    "#8B5E16",
+                  fontSize: 12,
+                }}
+              >
+                Clear all
+              </button>
+            </div>
+          )}
+
+        {/* =====================================================
+            UPLOAD PROGRESS
+            ===================================================== */}
+
+        {isUploading && (
+          <div
+            className="card"
+            style={{
+              padding: 20,
+              marginTop: 18,
+              border:
+                "1px solid #E2DDD4",
+              background:
+                "#FFFDF9",
+            }}
+          >
+            <div className="flex items-start gap-4">
+              <div
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+                style={{
+                  background:
+                    "#F5E6C8",
+                  color:
+                    "#9A6817",
+                }}
+              >
+                <Loader2
+                  size={18}
+                  className="animate-spin"
+                />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div
+                  className="font-medium"
+                  style={{
+                    color:
+                      "#1A1916",
+                  }}
+                >
+                  Receiving your document
+                  {files.length > 1
+                    ? "s"
+                    : ""}
+                  …
+                </div>
+
+                <div
+                  className="mt-1 text-xs leading-5"
+                  style={{
+                    color:
+                      "#6B6860",
+                  }}
+                >
+                  Uploading securely.
+                  InvoiAI will classify,
+                  extract and route the
+                  document automatically.
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 14,
+                    height: 6,
+                    borderRadius: 999,
+                    overflow:
+                      "hidden",
+                    background:
+                      "#EDE7DE",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${progress}%`,
+                      height: "100%",
+                      borderRadius:
+                        999,
+                      background:
+                        "#9A6817",
+                      transition:
+                        "width 200ms ease",
+                    }}
+                  />
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent:
+                      "space-between",
+                    marginTop: 7,
+                    fontSize: 11,
+                    color:
+                      "#8A867D",
+                  }}
+                >
+                  <span>
+                    Processing
+                  </span>
+
+                  <span>
+                    {progress}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
-      </button>
-    </div>
+
+        {/* =====================================================
+            SUCCESS
+            ===================================================== */}
+
+        {result && !isUploading && (
+          <div
+            className="card"
+            style={{
+              padding: 20,
+              marginTop: 18,
+              border:
+                "1px solid #D9E7D9",
+              background:
+                "#FAFCF8",
+            }}
+          >
+            <div className="flex items-start gap-4">
+              <div
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+                style={{
+                  background:
+                    "#E6F1E5",
+                  color:
+                    "#3D7040",
+                }}
+              >
+                <CheckCircle2
+                  size={19}
+                />
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div
+                  className="font-medium"
+                  style={{
+                    color:
+                      "#1A1916",
+                  }}
+                >
+                  Upload received
+                </div>
+
+                <div
+                  className="mt-1 text-xs leading-5"
+                  style={{
+                    color:
+                      "#6B6860",
+                  }}
+                >
+                  Your document
+                  {files.length > 1
+                    ? "s are"
+                    : " is"}{" "}
+                  now in the processing
+                  pipeline.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* =====================================================
+            ACTIONS
+            ===================================================== */}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems:
+              "center",
+            justifyContent:
+              "space-between",
+            gap: 16,
+            marginTop: 18,
+            flexWrap: "wrap",
+          }}
+        >
+          <div
+            className="dash-subtitle"
+            style={{
+              fontSize: 12,
+              display: "flex",
+              alignItems:
+                "center",
+              gap: 7,
+            }}
+          >
+            <Sparkles size={14} />
+            AI classification included
+          </div>
+
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={
+              !files.length ||
+              isUploading
+            }
+            style={{
+              display: "inline-flex",
+              alignItems:
+                "center",
+              justifyContent:
+                "center",
+              gap: 9,
+              minHeight: 46,
+              padding:
+                "0 18px",
+              borderRadius: 10,
+              border: 0,
+              background:
+                !files.length ||
+                isUploading
+                  ? "#D9D4CC"
+                  : "#1A1916",
+              color: "#FFFFFF",
+              cursor:
+                !files.length ||
+                isUploading
+                  ? "not-allowed"
+                  : "pointer",
+              fontWeight: 600,
+              fontSize: 13,
+              transition:
+                "all 160ms ease",
+            }}
+          >
+            {isUploading ? (
+              <>
+                <Loader2
+                  size={16}
+                  className="animate-spin"
+                />
+                Uploading…
+              </>
+            ) : (
+              <>
+                Send to InvoiAI
+                <ArrowRight
+                  size={16}
+                />
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* =====================================================
+            DUPLICATE DIALOG
+            ===================================================== */}
+
+        <DuplicateUploadDialog
+          open={Boolean(duplicate)}
+          fileNames={duplicateNames}
+          onCancel={() => {
+            if (singleDuplicate) {
+              cancelSingleDuplicate();
+              return;
+            }
+
+            if (batchDuplicate) {
+              cancelBatchDuplicate();
+            }
+          }}
+          onConfirm={() => {
+            if (singleDuplicate) {
+              confirmSingleDuplicate();
+              return;
+            }
+
+            if (batchDuplicate) {
+              confirmBatchDuplicate();
+            }
+          }}
+          isUploading={isUploading}
+        />
+
+        {/* =====================================================
+            SECURITY / TRUST NOTE
+            ===================================================== */}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems:
+              "flex-start",
+            gap: 10,
+            marginTop: 20,
+            padding:
+              "12px 14px",
+            border:
+              "1px solid #E7E0D7",
+            borderRadius: 10,
+            background:
+              "#FCFAF6",
+          }}
+        >
+          <AlertTriangle
+            size={15}
+            style={{
+              marginTop: 1,
+              flexShrink: 0,
+              color:
+                "#9A6817",
+            }}
+          />
+
+          <div
+            style={{
+              fontSize: 11,
+              lineHeight: 1.6,
+              color:
+                "#706C64",
+            }}
+          >
+            Upload only documents that
+            belong to your workspace.
+            InvoiAI securely receives the
+            original file before processing
+            and extraction begins.
+          </div>
+        </div>
+      </div>
+    </DashboardLayout>
   );
 }

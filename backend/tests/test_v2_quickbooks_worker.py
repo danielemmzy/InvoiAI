@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app2.workers.quickbooks_worker import QuickBooksWorker
+from app.workers.quickbooks_worker import QuickBooksWorker
 
 
 @pytest.mark.asyncio

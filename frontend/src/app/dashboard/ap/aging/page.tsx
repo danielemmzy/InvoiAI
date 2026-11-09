@@ -45,6 +45,8 @@ export default function AgingAnalysisPage() {
           <Link href="/dashboard/ap" className="ap-subnav-item">Overview</Link>
           <Link href="/dashboard/ap/aging" className="ap-subnav-item active">Aging analysis</Link>
           <Link href="/dashboard/ap/exceptions" className="ap-subnav-item">Exceptions</Link>
+          <Link href="/dashboard/ap/payments" className="ap-subnav-item">Payments</Link>
+          <Link href="/dashboard/settings/ap-rules" className="ap-subnav-item">AP settings</Link>
         </div>
       </div>
 

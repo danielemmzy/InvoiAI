@@ -6,6 +6,8 @@ from uuid import UUID
 from app.repositories.document.document_repository import (
     DocumentRepository,
 )
+from app.core.enum.database import PipelineStage
+from app.core.error_handler import classify_exception, safe_user_message
 
 from app.services.embedding_service import (
     EmbeddingService,
@@ -65,8 +67,49 @@ class EmbeddingWorker(BaseWorker):
                 "Document not found."
             )
 
-        await self.embedding_service.document_embedding(
-            document,
+        await self.repository.update_processing_state(
+            document.id,
+            step="embedding",
+            message="Building financial memory for search and future insights",
+            progress=96,
+        )
+
+        try:
+            await self.embedding_service.document_embedding(
+                document,
+            )
+        except Exception as exc:
+            descriptor = classify_exception(exc)
+            if not descriptor.retryable or getattr(self, "_current_attempt", self.retries) >= self.retries:
+                try:
+                    message = safe_user_message(exc)
+                    await self.repository.update_processing_state(
+                        document.id,
+                        step="failed",
+                        message=message,
+                        progress=100,
+                    )
+                    await self.repository.update(
+                        document.id,
+                        {"status": "failed", "error_message": message},
+                    )
+                except Exception:
+                    logger.exception("Could not persist embedding failure state for %s", document_id)
+            logger.error(
+                "Embedding failed for document %s: code=%s service=%s retryable=%s",
+                document_id, descriptor.code, descriptor.service, descriptor.retryable, exc_info=True,
+            )
+            raise
+
+        await self.repository.update_pipeline_stage(
+            document.id,
+            PipelineStage.COMPLETE,
+        )
+        await self.repository.update_processing_state(
+            document.id,
+            step="complete",
+            message="Analysis complete — InvoiAI has finished checking this document",
+            progress=100,
         )
 
         logger.info(

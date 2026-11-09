@@ -113,9 +113,12 @@ class OrganizationMember(TimestampedEntity):
     org_id: UUID
     user_id: UUID
     role: OrgRole
+    access_role_id: UUID | None = None
     department: str | None = None
     cost_center: str | None = None
     spending_limit: Decimal | None = None
+    payment_approval_limit: Decimal | None = None
+    supervisor_id: UUID | None = None
     invited_by: UUID | None = None
     invite_email: str | None = None
     invite_token: str | None = None

@@ -9,17 +9,18 @@ TRANSITIONS = {
     InvoiceAPStatus.EXTRACTING: {InvoiceAPStatus.VALIDATING, InvoiceAPStatus.REJECTED},
     InvoiceAPStatus.VALIDATING: {InvoiceAPStatus.MATCHING, InvoiceAPStatus.CODING, InvoiceAPStatus.MATCH_EXCEPTION, InvoiceAPStatus.REJECTED},
     InvoiceAPStatus.MATCHING: {InvoiceAPStatus.CODING, InvoiceAPStatus.MATCH_EXCEPTION, InvoiceAPStatus.ON_HOLD},
-    InvoiceAPStatus.MATCH_EXCEPTION: {InvoiceAPStatus.CODING, InvoiceAPStatus.REJECTED, InvoiceAPStatus.ON_HOLD},
+    InvoiceAPStatus.MATCH_EXCEPTION: {InvoiceAPStatus.VALIDATING, InvoiceAPStatus.CODING, InvoiceAPStatus.REJECTED, InvoiceAPStatus.ON_HOLD},
     InvoiceAPStatus.CODING: {InvoiceAPStatus.AWAITING_APPROVAL, InvoiceAPStatus.CODING_EXCEPTION, InvoiceAPStatus.REJECTED},
     InvoiceAPStatus.CODING_EXCEPTION: {InvoiceAPStatus.AWAITING_APPROVAL, InvoiceAPStatus.REJECTED, InvoiceAPStatus.CODING},
     InvoiceAPStatus.AWAITING_APPROVAL: {InvoiceAPStatus.APPROVED, InvoiceAPStatus.REJECTED, InvoiceAPStatus.ON_HOLD},
     InvoiceAPStatus.APPROVED: {InvoiceAPStatus.SYNCING_TO_ERP, InvoiceAPStatus.PAYMENT_READY},
     InvoiceAPStatus.SYNCING_TO_ERP: {InvoiceAPStatus.PAYMENT_READY, InvoiceAPStatus.APPROVED},
     InvoiceAPStatus.PAYMENT_READY: {InvoiceAPStatus.PAID},
-    InvoiceAPStatus.PAID: {InvoiceAPStatus.RECONCILED},
+    InvoiceAPStatus.PAID: {InvoiceAPStatus.RECONCILED, InvoiceAPStatus.PAYMENT_READY},
     InvoiceAPStatus.ON_HOLD: {InvoiceAPStatus.MATCHING, InvoiceAPStatus.CODING, InvoiceAPStatus.AWAITING_APPROVAL, InvoiceAPStatus.REJECTED},
     InvoiceAPStatus.REJECTED: set(),
-    InvoiceAPStatus.RECONCILED: set(),
+    # A provider-confirmed return/reversal can reopen a reconciled payable.
+    InvoiceAPStatus.RECONCILED: {InvoiceAPStatus.PAYMENT_READY},
 }
 
 class InvoiceStateMachine:

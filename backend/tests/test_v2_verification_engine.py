@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
-from app2.services.verification.engine import VerificationEngine
-from app2.core.enum.database import RecommendationType, RiskLevel
+from app.services.verification.engine import VerificationEngine
+from app.core.enum.database import RecommendationType, RiskLevel
 
 
 class Module:

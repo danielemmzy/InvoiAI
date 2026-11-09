@@ -59,8 +59,14 @@ class NotificationPreferenceMapper(BaseMapper):
                 exclude_none=True,
             )
 
+        # This mapper overrides BaseMapper, so explicitly serialize UUIDs
+        # before handing the payload to httpx/PostgREST JSON encoding.
+        user_id = preference["user_id"]
+        if user_id is not None:
+            user_id = str(user_id)
+
         return {
-            "user_id": preference["user_id"],
+            "user_id": user_id,
             "email_enabled": preference.get(
                 "email_enabled",
                 True,
@@ -84,21 +90,17 @@ class NotificationPreferenceMapper(BaseMapper):
         cls,
         preference: NotificationPreference | dict,
     ) -> dict:
+        from fastapi.encoders import jsonable_encoder
 
-        if isinstance(
-            preference,
-            NotificationPreference,
-        ):
+        if isinstance(preference, NotificationPreference):
             preference = preference.model_dump(
+                mode="python",
                 exclude_none=True,
             )
 
-        return {
+        payload = {
             k: v
             for k, v in preference.items()
-            if k
-            not in {
-                "id",
-                "created_at",
-            }
+            if k not in {"id", "created_at"}
         }
+        return jsonable_encoder(payload)

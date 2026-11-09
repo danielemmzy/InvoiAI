@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app2.services.token_service import TokenService
+from app.services.token_service import TokenService
 
 
 class FakeRepository:

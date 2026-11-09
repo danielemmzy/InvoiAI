@@ -2,12 +2,12 @@ import pytest
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app2.services.insights.analyzers.receivable_analyzer import ReceivableAnalyzer
-from app2.services.insights.analyzers.spending_analyzer import SpendingAnalyzer
-from app2.services.insights.analyzers.vendor_analyzer import VendorAnalyzer
-from app2.services.insights.analyzers.subscription_analyzer import SubscriptionAnalyzer
-from app2.services.insights.analyzers.cashflow_analyzer import CashflowAnalyzer
-from app2.services.insights.analyzers.payable_analyzer import PayableAnalyzer
+from app.services.insights.analyzers.receivable_analyzer import ReceivableAnalyzer
+from app.services.insights.analyzers.spending_analyzer import SpendingAnalyzer
+from app.services.insights.analyzers.vendor_analyzer import VendorAnalyzer
+from app.services.insights.analyzers.subscription_analyzer import SubscriptionAnalyzer
+from app.services.insights.analyzers.cashflow_analyzer import CashflowAnalyzer
+from app.services.insights.analyzers.payable_analyzer import PayableAnalyzer
 
 
 class EmptyDocuments:

@@ -57,7 +57,8 @@ class AuditLog(DomainModel):
 
     city: str | None = None
 
-    ai_triggered: bool
+    # Non-AI events (such as a user editing captured fields) are not AI-triggered.
+    ai_triggered: bool = False
 
     ai_model_used: str | None = None
 

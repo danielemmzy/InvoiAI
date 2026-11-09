@@ -4,6 +4,7 @@ import logging
 from uuid import UUID
 
 from app.services.analysis.analysis_service import AnalysisService
+from app.core.error_handler import classify_exception, safe_user_message
 from app.repositories.document.document_repository import DocumentRepository
 from app.workers.base import BaseWorker
 
@@ -53,10 +54,40 @@ class AnalysisWorker(BaseWorker):
             document_id,
         )
 
-        await self.analysis_service.analyze_document(
-            document_id=document_id,
-        )
+        try:
+            await self.analysis_service.analyze_document(
+                document_id=document_id,
+            )
+        except Exception as exc:
+            descriptor = classify_exception(exc)
+            # A failed analysis must become a visible terminal processing
+            # state. The user-facing message is centralized so platform
+            # failures (AI/database/network) are not exposed as raw traces.
+            if not descriptor.retryable or getattr(self, "_current_attempt", self.retries) >= self.retries:
+                try:
+                    message = safe_user_message(exc)
+                    await self.documents.update_processing_state(
+                        document_id,
+                        step="failed",
+                        message=message,
+                        progress=100,
+                    )
+                    await self.documents.update(
+                        document_id,
+                        {"status": "failed", "error_message": message, "intelligence_status": "failed"},
+                    )
+                except Exception:
+                    logger.exception("Could not persist analysis failure state for %s", document_id)
+            logger.error(
+                "Analysis failed for document %s: code=%s service=%s retryable=%s",
+                document_id, descriptor.code, descriptor.service, descriptor.retryable, exc_info=True,
+            )
+            raise
 
+        await self.documents.update(
+            document_id,
+            {"intelligence_status": "complete"},
+        )
         logger.info(
             "Analysis completed for document %s",
             document_id,

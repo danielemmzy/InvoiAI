@@ -1,7 +1,16 @@
 -- InvoiAI V2 schema manifest
--- Supabase/PostgreSQL is authoritative. Apply migrations in app/migrations/ in order.
+-- Supabase/PostgreSQL is authoritative. Apply migrations in backend/migrations/ in lexical order.
 -- This file intentionally does not duplicate the complete legacy schema.
--- Current V2 migrations:
---   20260813_notification_delivery_infrastructure.sql
---   20260814_finance_insight_schema.sql
+-- Current repository migration chain:
+--   20260926_industry_standard_org_approval_controls.sql
+--   20260927_document_intake_explicit_processing.sql
+--   20260927_document_type_intake_recognition.sql
+--   20260928_document_capture_and_editing.sql
+--   20261009_vendor_credits.sql
+--   20261010_ap_bill_sync_reliability.sql
+--   20261010_ap_email_intake_idempotency.sql
+--   20261010_payment_lifecycle_hardening.sql
+--   20261011_accounting_tax_code_mappings.sql
+--   20261012_tenant_isolation_rls_and_audit_indexes.sql
+--   20261013_auth_email_otp_verification.sql
 -- Keep this manifest synchronized whenever a migration is added.

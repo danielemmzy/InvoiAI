@@ -20,13 +20,20 @@ class AuthRepository:
             settings.supabase_anon_key,
         )
 
-    async def signup(self, email: str, password: str):
-        return self._client().auth.sign_up(
-            {
-                "email": email,
-                "password": password,
-            }
-        )
+    async def signup(
+        self,
+        email: str,
+        password: str,
+        metadata: dict | None = None,
+    ):
+        payload: dict = {
+            "email": email,
+            "password": password,
+        }
+        if metadata:
+            payload["options"] = {"data": metadata}
+
+        return self._client().auth.sign_up(payload)
 
     async def login(self, email: str, password: str):
         return self._client().auth.sign_in_with_password(
@@ -78,5 +85,16 @@ class AuthRepository:
             str(user_id),
             {
                 "password": password,
+            },
+        )
+
+    async def admin_confirm_email(self, user_id):
+        """Mark the identity provider email confirmed after a valid OTP."""
+        from app.core.supabase import get_supabase
+
+        return get_supabase().auth.admin.update_user_by_id(
+            str(user_id),
+            {
+                "email_confirm": True,
             },
         )

@@ -25,6 +25,11 @@ class OrganizationContext(BaseModel):
     Active organization context.
     """
 
+    # Authenticated user who owns this request-scoped organization context.
+    # Keep this separate from the organization identity because a workspace
+    # can contain multiple members.
+    user_id: str
+
     org_id: UUID
 
     name: str

@@ -1,10 +1,10 @@
-from app2.services.insights.result import AnalyzerResult
-from app2.services.insights.detectors.expense_anomaly_detector import ExpenseAnomalyDetector
-from app2.services.insights.detectors.cashflow_detector import CashflowDetector
-from app2.services.insights.detectors.overdue_detector import OverdueDetector
-from app2.services.insights.detectors.price_increase_detector import PriceIncreaseDetector
-from app2.services.insights.detectors.duplicate_charge_detector import DuplicateChargeDetector
-from app2.core.enum.insight import InsightSeverity, InsightType
+from app.services.insights.result import AnalyzerResult
+from app.services.insights.detectors.expense_anomaly_detector import ExpenseAnomalyDetector
+from app.services.insights.detectors.cashflow_detector import CashflowDetector
+from app.services.insights.detectors.overdue_detector import OverdueDetector
+from app.services.insights.detectors.price_increase_detector import PriceIncreaseDetector
+from app.services.insights.detectors.duplicate_charge_detector import DuplicateChargeDetector
+from app.core.enum.insight import InsightSeverity, InsightType
 
 
 def test_insight_detectors_apply_thresholds():

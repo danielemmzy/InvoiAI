@@ -26,6 +26,8 @@ const RESET_PASSWORD_PATH = "auth/reset-password";
 const PUBLIC_AUTH_PATHS = new Set([
   "auth/forgot-password",
   "auth/resend-verification",
+  "auth/verify-otp",
+  "auth/resend-otp",
 ]);
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -45,6 +47,58 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
+}
+
+function bffError(
+  status: number,
+  code: string,
+  message: string,
+  retryable = false,
+): NextResponse {
+  const errorId = crypto.randomUUID();
+  return NextResponse.json(
+    {
+      detail: {
+        code,
+        message,
+        error_id: errorId,
+        retryable,
+      },
+    },
+    {
+      status,
+      headers: { "X-Error-ID": errorId },
+    },
+  );
+}
+
+function backendPlatformError(error: unknown): NextResponse {
+  const errorId = crypto.randomUUID();
+  const code =
+    error && typeof error === "object" && "cause" in error
+      ? String((error as { cause?: { code?: string } }).cause?.code || "")
+      : "";
+
+  const message =
+    code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT"
+      ? "InvoiAI took too long to reach the backend. Please try again."
+      : "InvoiAI cannot reach the backend right now. Please try again shortly.";
+
+  return NextResponse.json(
+    {
+      detail: {
+        code: "BACKEND_UNAVAILABLE",
+        message,
+        error_id: errorId,
+        retryable: true,
+        service: "backend",
+      },
+    },
+    {
+      status: 503,
+      headers: { "X-Error-ID": errorId },
+    },
+  );
 }
 
 /**
@@ -163,15 +217,7 @@ function assertCsrfSafe(
     return null;
   }
 
-  return NextResponse.json(
-    {
-      detail:
-        "Cross-site requests are not allowed.",
-    },
-    {
-      status: 403,
-    },
-  );
+  return bffError(403, "CSRF_REJECTED", "Cross-site requests are not allowed.");
 }
 
 function buildBackendUrl(
@@ -475,16 +521,11 @@ async function handleRefresh(
   session: BffSession | null,
 ): Promise<NextResponse> {
   if (!session?.refreshToken) {
-    const response =
-      NextResponse.json(
-        {
-          detail:
-            "Session expired. Please log in again.",
-        },
-        {
-          status: 401,
-        },
-      );
+    const response = bffError(
+      401,
+      "SESSION_EXPIRED",
+      "Session expired. Please log in again.",
+    );
 
     clearSessionCookie(response);
     clearLegacyCookies(response);
@@ -555,16 +596,11 @@ async function handleRefresh(
     !accessToken ||
     !refreshToken
   ) {
-    const response =
-      NextResponse.json(
-        {
-          detail:
-            "Session refresh failed.",
-        },
-        {
-          status: 401,
-        },
-      );
+    const response = bffError(
+      401,
+      "SESSION_REFRESH_FAILED",
+      "Session refresh failed. Please log in again.",
+    );
 
     clearSessionCookie(response);
     clearLegacyCookies(response);
@@ -767,7 +803,7 @@ async function proxyAuthenticatedRequest(
    MAIN BFF HANDLER
    ============================================================ */
 
-async function handler(
+async function handlerInternal(
   request: Request,
   context: {
     params: Promise<{
@@ -792,15 +828,7 @@ async function handler(
     segments.join("/");
 
   if (!path) {
-    return NextResponse.json(
-      {
-        detail:
-          "BFF route requires a backend path.",
-      },
-      {
-        status: 404,
-      },
-    );
+    return bffError(404, "BFF_PATH_REQUIRED", "BFF route requires a backend path.");
   }
 
   /*
@@ -883,15 +911,7 @@ async function handler(
    * Every other backend API request requires a BFF session.
    */
   if (!session) {
-    return NextResponse.json(
-      {
-        detail:
-          "Authentication required",
-      },
-      {
-        status: 401,
-      },
-    );
+    return bffError(401, "AUTHENTICATION_REQUIRED", "Authentication required.");
   }
 
   return proxyAuthenticatedRequest(
@@ -899,6 +919,22 @@ async function handler(
     path,
     session,
   );
+}
+
+async function handler(
+  request: Request,
+  context: {
+    params: Promise<{
+      path: string[];
+    }>;
+  },
+): Promise<NextResponse> {
+  try {
+    return await handlerInternal(request, context);
+  } catch (error) {
+    console.error("BFF backend/platform error", error);
+    return backendPlatformError(error);
+  }
 }
 
 export const GET = handler;

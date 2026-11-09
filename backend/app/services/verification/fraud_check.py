@@ -62,14 +62,14 @@ class FraudCheck:
             return VerificationResult(
                 passed=False,
                 score=0,
-                confidence=100,
-                summary="Vendor unavailable for fraud analysis.",
+                confidence=0,
+                summary="Fraud analysis is unavailable until the vendor is resolved.",
                 reasons=[
-                    "Vendor record not found."
+                    "Vendor record could not be resolved for fraud analysis."
                 ],
                 positives=[],
-                warnings=[],
-                metadata={},
+                warnings=["Fraud checks could not be fully completed."],
+                metadata={"available": False},
             )
 
         # -----------------------------------------------------
@@ -159,6 +159,7 @@ class FraudCheck:
             )
 
         metadata = {
+            "available": True,
             "risk_score": vendor.risk_score,
             "fraud_flags": vendor.fraud_flags,
             "duplicate_count": vendor.duplicate_count,

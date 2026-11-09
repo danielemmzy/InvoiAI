@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status, Request, Response
+
+from app.core.auth import require_verified_user
 from fastapi.responses import RedirectResponse
 import httpx
 
@@ -14,7 +16,11 @@ from app.core.limiter import limiter
 from app.core.enum.database import IntegrationProvider
 from app.schemas.integration import IntegrationConnectionResponse
 
-router = APIRouter(prefix="/integrations", tags=["Integrations"])
+router = APIRouter(
+    prefix="/integrations",
+    tags=["Integrations"],
+    dependencies=[Depends(require_verified_user)],
+)
 
 
 async def _require_permission(
