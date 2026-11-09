@@ -177,7 +177,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* ── Main ── */}
       <main className={`dash-main${collapsed ? " expanded" : ""}`}>
         {/* Topbar */}
-        <div className="dash-topbar">
+        <div className="dash-topbar ds-glass">
           <div className="topbar-left">
             <button
               className="topbar-hamburger"

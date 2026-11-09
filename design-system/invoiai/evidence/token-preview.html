@@ -14,7 +14,7 @@
       background: var(--surface-page);
       color: var(--ink-primary);
     }
-    h1 { font-family: var(--font-display); font-size: 44px; line-height: 1; letter-spacing: -.04em; margin: 0 0 10px; }
+    h1 { max-width: 100%; font-family: var(--font-display); font-size: clamp(28px, 4vw, 44px); line-height: 1.05; letter-spacing: -.04em; margin: 0 0 10px; }
     h2 { font-size: 15px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-secondary); margin: 32px 0 12px; }
     p { color: var(--ink-secondary); line-height: 1.6; margin: 0 0 16px; }
     .row { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -25,7 +25,8 @@
     .glass .label { font-size: 13px; font-weight: 700; color: var(--ink-primary); }
     .gloss-card { padding: 20px; border-radius: var(--radius-lg); border: 1px solid var(--border-subtle); background: var(--surface-raised); width: 250px; }
     .gloss-card strong { display: block; font-size: 16px; margin-bottom: 4px; }
-    table { width: 100%; border-collapse: collapse; background: var(--surface-raised); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); overflow: hidden; }
+    .table-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); }
+    table { width: 100%; min-width: 620px; border-collapse: collapse; background: var(--surface-raised); overflow: hidden; }
     th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
     th { background: var(--surface-sunken); color: var(--ink-secondary); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
     td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -37,12 +38,16 @@
     .secondary { background: var(--surface-raised); border-color: var(--border-subtle); color: var(--ink-primary); }
     .danger { background: var(--danger); color: var(--on-danger); }
     .note { border-left: 3px solid var(--accent-primary); padding-left: 12px; }
-    .specimen { max-width: 1080px; margin: 0 auto; }
+    .specimen { width: 100%; max-width: 1080px; margin: 0 auto; }
+    .row { width: 100%; min-width: 0; }
     [data-ds-theme="dark"] .chip { border-color: rgba(255,255,255,.12); }
     @media (max-width: 560px) {
       body { padding: 20px; }
-      h1 { font-size: 34px; }
-      .swatch { width: calc(50% - 6px); }
+      h1 { font-size: clamp(27px, 8vw, 32px); }
+      .specimen { width: min(100%, 350px); }
+      .row { display: grid; grid-template-columns: minmax(0, 1fr); }
+      .row > * { width: 100%; min-width: 0; max-width: 100%; }
+      .swatch, .gloss-card { width: 100%; }
     }
   </style>
 </head>
@@ -69,14 +74,16 @@
     </div>
 
     <h2>Working surface: table</h2>
-    <table>
-      <thead><tr><th>Vendor</th><th>Invoice</th><th>Status</th><th style="text-align:right">Amount</th></tr></thead>
-      <tbody>
-        <tr><td>Acme Industrial</td><td>INV-2048</td><td>Ready to approve</td><td class="num">£8,420.00</td></tr>
-        <tr><td>Northstar Supply</td><td>INV-2091</td><td>Needs coding</td><td class="num">$2,100.00</td></tr>
-        <tr><td>Horizon Freight</td><td>INV-2104</td><td>Due Friday</td><td class="num">€5,900.00</td></tr>
-      </tbody>
-    </table>
+    <div class="table-scroll" role="region" aria-label="Invoice examples" tabindex="0">
+      <table>
+        <thead><tr><th>Vendor</th><th>Invoice</th><th>Status</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody>
+          <tr><td>Acme Industrial</td><td>INV-2048</td><td>Ready to approve</td><td class="num">£8,420.00</td></tr>
+          <tr><td>Northstar Supply</td><td>INV-2091</td><td>Needs coding</td><td class="num">$2,100.00</td></tr>
+          <tr><td>Horizon Freight</td><td>INV-2104</td><td>Due Friday</td><td class="num">€5,900.00</td></tr>
+        </tbody>
+      </table>
+    </div>
 
     <h2>Form and actions</h2>
     <div class="row" style="align-items:flex-end">

@@ -78,7 +78,7 @@ export default function DashboardPage() {
           object's own existence avoids rendering "undefined/undefined
           documents" when there's genuinely no usage data yet. */}
       {user?.usage?.limit != null && (
-        <div className="card" style={{ marginBottom: 24 }}>
+        <div className="card ds-data-surface" style={{ marginBottom: 24 }}>
           <div className="card-header">
             <span className="card-title">Monthly usage</span>
             <span style={{ fontSize: 12, color: "#6B6860" }}>
@@ -119,7 +119,7 @@ export default function DashboardPage() {
       {/* Main grid */}
       <div className="dash-grid">
         {/* Recent documents */}
-        <div className="card">
+        <div className="card ds-data-surface">
           <div className="card-header">
             <span className="card-title">Recent documents</span>
             <Link href="/dashboard/history" className="card-action">View all →</Link>
@@ -139,7 +139,7 @@ export default function DashboardPage() {
         {/* Right column */}
         <div>
           {/* Keep the first paint lightweight. Vendor/AP analytics are loaded inside their own modules. */}
-          <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card ds-data-surface" style={{ marginBottom: 20 }}>
             <div className="card-header">
               <span className="card-title">Document activity</span>
               <Link href="/dashboard/history" className="card-action">Open history →</Link>
