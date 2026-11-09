@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.core.observability import record_webhook
 from app.webhooks.google import GoogleWebhookHandler
 from app.webhooks.quickbooks import QuickBooksWebhookHandler
 from app.webhooks.stripe import StripeWebhookHandler
@@ -28,39 +29,44 @@ from app.webhooks.xero import XeroWebhookHandler
 router = APIRouter(prefix="/webhooks", tags=["Integration Webhooks"])
 
 
-async def _handle(request: Request, handler) -> dict:
+async def _handle(request: Request, handler, provider: str) -> dict:
     body = await request.body()
     headers = dict(request.headers)
 
-    verified = await handler.verify(headers=headers, body=body)
-    if not verified:
-        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+    try:
+        verified = await handler.verify(headers=headers, body=body)
+        if not verified:
+            raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-    payload = await request.json()
-    events = await handler.parse(payload=payload)
+        payload = await request.json()
+        events = await handler.parse(payload=payload)
 
-    dispatcher = WebhookDispatcher()
-    for event in events:
-        await dispatcher.dispatch(event=event)
+        dispatcher = WebhookDispatcher()
+        for event in events:
+            await dispatcher.dispatch(event=event)
+    except Exception:
+        record_webhook(provider=provider, result="failed")
+        raise
 
+    record_webhook(provider=provider, result="success")
     return {"received": True, "events_processed": len(events)}
 
 
 @router.post("/quickbooks")
 async def quickbooks_webhook(request: Request):
-    return await _handle(request, QuickBooksWebhookHandler())
+    return await _handle(request, QuickBooksWebhookHandler(), "quickbooks")
 
 
 @router.post("/xero")
 async def xero_webhook(request: Request):
-    return await _handle(request, XeroWebhookHandler())
+    return await _handle(request, XeroWebhookHandler(), "xero")
 
 
 @router.post("/google")
 async def google_webhook(request: Request):
-    return await _handle(request, GoogleWebhookHandler())
+    return await _handle(request, GoogleWebhookHandler(), "google")
 
 
 @router.post("/stripe")
 async def stripe_webhook(request: Request):
-    return await _handle(request, StripeWebhookHandler())
+    return await _handle(request, StripeWebhookHandler(), "stripe")

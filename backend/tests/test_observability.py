@@ -10,6 +10,7 @@ from app.core.observability import (
     MetricsRegistry,
     metrics,
     record_provider_sync,
+    record_notification,
     redact,
 )
 from app.services.observability.alerts import ALERT_RUNBOOKS, Alert, AlertService
@@ -69,6 +70,11 @@ def test_provider_sync_metric_has_a_stable_name():
     record_provider_sync(provider="quickbooks", result="success")
     snapshot = metrics.snapshot()
     assert snapshot["counters"]["provider_sync_total{provider=quickbooks,result=success}"] == 1
+
+
+def test_notification_metric_does_not_use_unbounded_channel_labels():
+    record_notification(channel="customer@example.test", result="failed")
+    assert "notification_delivery_total{channel=other,result=failed}" in metrics.snapshot()["counters"]
 
 
 async def test_alert_delivery_requires_a_configured_webhook(monkeypatch):

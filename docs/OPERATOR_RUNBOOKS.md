@@ -1,9 +1,10 @@
 # Operator runbooks
 
-Owner: **Platform on-call** (`ALERT_OWNER`). Every alert links to one section
-below. Alerts are emitted through `app/services/observability/alerts.py`; when
-`ALERT_WEBHOOK_URL` is unset they are logged only, which is acceptable for
-development but not for production.
+Owner: configure `ALERT_OWNER` to the named production responder before pilot.
+The code default (`Platform on-call`) is a placeholder, not an assigned person
+or team. Alerts are emitted through `app/services/observability/alerts.py`; when
+`ALERT_WEBHOOK_URL` is unset they are logged only. Production alert delivery is
+an external deployment gate until a real endpoint is configured and tested.
 
 ## Signals
 
@@ -19,11 +20,25 @@ development but not for production.
 | `quota_state_total{state}` | quota checks | Open quota runbook |
 
 `GET /api/v2/ops/metrics` returns the in-process snapshot. It requires an
-organization member with `audit:view`. Do not expose it publicly.
+organization member with `audit:view`. Do not expose it publicly. Counters and
+gauges live only in the current process and reset on restart; they are not a
+durable or cross-worker monitoring backend. Configure a collector before using
+them for production alert thresholds.
 
 `POST /api/v2/ops/alerts/test` sends a test alert. Delivery requires
 `ALERT_WEBHOOK_URL`; without it the response is
 `{"delivered": false, "reason": "alert_webhook_not_configured"}`.
+The endpoint proves delivery only to the configured webhook receiver; local
+tests with a mocked transport do not prove a production alert was delivered.
+
+## API latency and errors
+
+1. Compare `api_request_duration_ms` and `api_errors_total` by route template.
+2. Check `X-Request-ID` in application logs and follow the same ID through the
+   request path. Do not use raw URLs, request bodies, or customer data in alert
+   labels.
+3. If metrics are unavailable after restart, confirm the collector is wired;
+   the built-in registry is process-local.
 
 ## Stuck workers
 

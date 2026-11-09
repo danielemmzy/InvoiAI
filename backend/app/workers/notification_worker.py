@@ -4,6 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from app.core.observability import record_notification
 from app.services.notification.notification_delivery_service import NotificationDeliveryService
 from app.services.notification.notification_dispatcher import NotificationDispatcher
 from app.services.notification.queue.base import NotificationQueue
@@ -47,6 +48,7 @@ class NotificationWorker(BaseWorker):
 
             if success:
                 await self.queue.acknowledge(delivery_id=delivery_id)
+                record_notification(channel=str(delivery.get("channel", "unknown")), result="success")
                 result["sent"] += 1
                 continue
 
@@ -54,6 +56,7 @@ class NotificationWorker(BaseWorker):
                 delivery_id,
                 error_message=error,
             )
+            record_notification(channel=str(delivery.get("channel", "unknown")), result="failed")
             if updated and updated.status.value == "failed":
                 result["failed"] += 1
             else:
