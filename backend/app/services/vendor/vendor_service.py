@@ -139,6 +139,12 @@ class VendorService:
             exclude_unset=True,
         )
 
+        if data.get("name") is not None:
+            data["name"] = data["name"].strip()
+            if not data["name"]:
+                raise ValueError("Vendor name is required.")
+            data["normalized_name"] = data["name"].casefold()
+
         return await self.repository.update(
             vendor_id,
             data,
@@ -160,9 +166,8 @@ class VendorService:
         if vendor is None:
             raise ValueError("Vendor not found.")
 
-        return await self.repository.delete(
-            vendor_id,
-        )
+        result = await self.repository.update(vendor_id, {"is_active": False})
+        return result is not None
 
     # =========================================================
     # Preferred Vendors

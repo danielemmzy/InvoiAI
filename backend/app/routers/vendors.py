@@ -11,7 +11,10 @@ from app.core.cache_keys import vendors as vendors_cache_key
 from app.core.limiter import limiter
 from app.core.authorization import require_permission
 from app.core.permissions import VIEW_VENDORS, MANAGE_VENDORS
-from app.schemas.vendor import VendorResponse, VendorUpdate
+from app.schemas.vendor import VendorCreate, VendorResponse, VendorUpdate
+from app.models.domain.vendor import Vendor
+from datetime import UTC, datetime
+from uuid import uuid4
 from app.services.vendor.vendor_statement_service import VendorStatementService
 
 router = APIRouter(prefix="/vendors", tags=["Vendors"])
@@ -96,6 +99,28 @@ async def get_vendor(
     if vendor is None or vendor.org_id != ctx.org_id:
         raise HTTPException(status_code=404, detail="Vendor not found")
     return VendorResponse.model_validate(vendor, from_attributes=True)
+
+
+@router.post("", response_model=VendorResponse, status_code=201)
+async def create_vendor(
+    payload: VendorCreate,
+    ctx: OrganizationContext = Depends(get_org_context),
+    _permission: None = Depends(require_permission(MANAGE_VENDORS)),
+):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Vendor name is required")
+    now = datetime.now(UTC)
+    vendor = Vendor(
+        id=uuid4(), org_id=ctx.org_id, name=name, normalized_name=name.casefold(),
+        created_at=now, updated_at=now, **payload.model_dump(exclude={"name"}),
+    )
+    try:
+        created = await get_container().vendor_service.create_vendor(vendor)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await cache.delete_prefix(f"v2:vendors:{ctx.org_id}:")
+    return VendorResponse.model_validate(created, from_attributes=True)
 
 
 @router.patch("/{vendor_id}", response_model=VendorResponse)

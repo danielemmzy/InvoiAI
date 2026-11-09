@@ -14,6 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enum.database import RiskLevel
+from app.core.enum.database import IntegrationProvider
 
 
 # ============================================================
@@ -49,6 +50,8 @@ class VendorCreate(BaseModel):
     industry: str | None = None
 
     category: str | None = None
+
+    is_active: bool = True
 
 
 # ============================================================
@@ -93,6 +96,8 @@ class VendorUpdate(BaseModel):
 
     is_blocked: bool | None = None
 
+    is_active: bool | None = None
+
     blocked_reason: str | None = None
 
     notes: str | None = None
@@ -133,6 +138,14 @@ class VendorResponse(BaseModel):
     id: UUID
 
     org_id: UUID
+
+    provider: IntegrationProvider | None = None
+
+    external_id: str | None = None
+
+    synced_at: datetime | None = None
+
+    last_modified_external: datetime | None = None
 
     name: str
 
@@ -229,6 +242,8 @@ class VendorResponse(BaseModel):
     is_preferred: bool
 
     is_blocked: bool
+
+    is_active: bool = True
 
     blocked_reason: str | None
 

@@ -177,6 +177,26 @@ async def list_integrations(
     ]
 
 
+@router.post("/{provider}/sync/vendors")
+async def import_vendors(
+    provider: str,
+    user: AuthUser = Depends(get_current_user),
+    ctx: OrganizationContext = Depends(get_org_context),
+):
+    await _require_permission(user=user, ctx=ctx, permission=MANAGE_INTEGRATIONS)
+    from app.services.vendor.vendor_import_service import VendorImportService
+
+    try:
+        return await VendorImportService().import_suppliers(org_id=ctx.org_id, provider=provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        from app.services.ap.provider.accounting_provider import NoActiveAccountingProviderError
+        if isinstance(exc, NoActiveAccountingProviderError):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise
+
+
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect_integration(
     connection_id: str,

@@ -124,6 +124,15 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             external_id=vendor.external_id,
         )
 
+        if existing is None:
+            response = (
+                self.table().select("*")
+                .eq("org_id", str(vendor.org_id))
+                .eq("normalized_name", vendor.normalized_name)
+                .limit(1).execute()
+            )
+            existing = self._one(response)
+
         if existing:
 
             response = (
@@ -135,23 +144,24 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                         "phone": vendor.phone,
                         "website": vendor.website,
                         "tax_id": vendor.tax_id,
-                        "address": vendor.address,
-                        "currency": vendor.currency,
+                        "normalized_name": vendor.normalized_name,
                         "provider": vendor.provider.value,
                         "external_id": vendor.external_id,
                         "metadata": vendor.metadata,
                         "is_active": vendor.is_active,
-                        "last_modified_external": vendor.last_modified_external,
-                        "synced_at": vendor.synced_at,
                         "updated_at": datetime.now(UTC).isoformat(),
                     }
                 )
+                .eq("org_id", str(vendor.org_id))
                 .eq("id", str(existing.id))
                 .execute()
             )
 
             return self._one(response)
 
+        return await self.create(vendor)
+
+    async def create_vendor(self, vendor: Vendor) -> Vendor:
         return await self.create(vendor)
 
     async def create_from_integration(
@@ -206,6 +216,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
+            .eq("is_active", True)
             .ilike("name", f"%{query}%")
             .order(
                 "name",
@@ -229,6 +240,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
+            .eq("is_active", True)
             .eq("is_preferred", True)
             .order(
                 "name",
@@ -270,6 +282,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
+            .eq("is_active", True)
             .eq("is_blocked", True)
             .order(
                 "name",
@@ -521,6 +534,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
+            .eq("is_active", True)
             .order("updated_at", desc=False)
             .limit(limit)
             .execute()

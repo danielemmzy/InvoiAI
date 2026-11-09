@@ -14,4 +14,5 @@
 --   20261012_tenant_isolation_rls_and_audit_indexes.sql
 --   20261013_auth_email_otp_verification.sql
 --   20261109_private_documents_bucket.sql
+--   20261110_vendor_supplier_lifecycle.sql
 -- Keep this manifest synchronized whenever a migration is added.
