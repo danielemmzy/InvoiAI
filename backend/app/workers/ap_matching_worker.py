@@ -47,7 +47,7 @@ class APMatchingWorker(BaseWorker):
             # A previous run was interrupted after the state transition. Resume
             # the same step instead of waiting for a human reset.
             self.db.table("documents").update({"processing_step": "ap_matching", "processing_message": "Resuming invoice matching after an interrupted run.", "processing_progress": 35}).eq("id", str(document_id)).eq("org_id", str(doc["org_id"])).execute()
-        lines=self.db.table("document_line_items").select("*").eq("document_id",str(document_id)).order("position").execute().data or []
+        lines=self.db.table("document_line_items").select("*").eq("org_id",str(doc["org_id"])).eq("document_id",str(document_id)).order("position").execute().data or []
         po=None
         if doc.get("purchase_order_id"):
             rows=self.db.table("purchase_orders").select("*").eq("org_id",doc["org_id"]).eq("id",doc["purchase_order_id"]).limit(1).execute().data
@@ -65,10 +65,10 @@ class APMatchingWorker(BaseWorker):
             goods_receipt=receipt,
         )
         if result.status==APMatchStatus.EXCEPTION:
-            self.db.table("documents").update({"status":"needs_review","pipeline_stage":"approval","processing_step":"ap_match_exception","processing_message":f"Matching found {len(result.exceptions)} issue(s). Review the linked exception(s) before continuing.","processing_progress":55}).eq("id",str(document_id)).execute()
+            self.db.table("documents").update({"status":"needs_review","pipeline_stage":"approval","processing_step":"ap_match_exception","processing_message":f"Matching found {len(result.exceptions)} issue(s). Review the linked exception(s) before continuing.","processing_progress":55}).eq("id",str(document_id)).eq("org_id",str(doc["org_id"])).execute()
             await self.state.transition(document_id,UUID(doc["org_id"]),InvoiceAPStatus.MATCH_EXCEPTION,triggered_by="worker",reason=f"{len(result.exceptions)} matching exception(s)")
         else:
-            self.db.table("documents").update({"processing_step":"ap_coding","processing_message":"Matching checks completed. Preparing general-ledger coding.","processing_progress":60}).eq("id",str(document_id)).execute()
+            self.db.table("documents").update({"processing_step":"ap_coding","processing_message":"Matching checks completed. Preparing general-ledger coding.","processing_progress":60}).eq("id",str(document_id)).eq("org_id",str(doc["org_id"])).execute()
             await self.state.transition(document_id,UUID(doc["org_id"]),InvoiceAPStatus.CODING,triggered_by="worker")
     async def run_pending(self,limit:int=50):
         rows=self.db.table("documents").select("id").eq("ap_enabled",True).eq("ap_status",InvoiceAPStatus.VALIDATING.value).eq("document_type","invoice").limit(limit).execute().data or []

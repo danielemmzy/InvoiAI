@@ -39,9 +39,11 @@ async def test_list_documents_scopes_invoice_or_vendor_search_to_the_organizatio
     repository = object.__new__(DocumentRepository)
     repository.table = lambda: query
     repository._many = lambda response: response.data
+    org_id = uuid4()
 
-    await repository.list_documents(uuid4(), query="INV-2048")
+    await repository.list_documents(org_id, query="INV-2048")
 
+    assert ("org_id", str(org_id)) in query.filters
     assert ("or", "document_number.ilike.*INV-2048*,vendor_name.ilike.*INV-2048*") in query.filters
 
 

@@ -15,10 +15,15 @@
 
 do $$
 declare
-    table_name text;
+    target_table text;
     tables text[] := array[
         'documents',
         'document_line_items',
+        'document_analyses',
+        'document_embeddings',
+        'vendor_embeddings',
+        'organization_embeddings',
+        'ocr_results',
         'invoice_codings',
         'invoice_exceptions',
         'invoice_comments',
@@ -31,6 +36,7 @@ declare
         'approval_history',
         'approval_authorities',
         'approval_delegations',
+        'organization_roles',
         'sod_rules',
         'audit_logs',
         'integration_connections',
@@ -38,6 +44,7 @@ declare
         'integration_webhooks',
         'ap_email_intake_events',
         'ap_email_intake_attachments',
+        'ap_email_intake_addresses',
         'vendor_credits',
         'vendor_credit_applications',
         'vendor_credit_events',
@@ -52,6 +59,8 @@ declare
         'ap_approval_group_members',
         'coding_rules',
         'allocation_plans',
+        'invoice_status_log',
+        'matching_tolerances',
         'organization_settings',
         'organization_usage',
         'notifications',
@@ -59,30 +68,30 @@ declare
     ];
     policy_name text;
 begin
-    foreach table_name in array tables loop
-        if to_regclass('public.' || table_name) is null then
+    foreach target_table in array tables loop
+        if to_regclass('public.' || target_table) is null then
             continue;
         end if;
 
         if not exists (
             select 1
-            from information_schema.columns
-            where table_schema = 'public'
-              and table_name = table_name
-              and column_name = 'org_id'
+            from information_schema.columns AS columns
+            where columns.table_schema = 'public'
+              and columns.table_name = target_table
+              and columns.column_name = 'org_id'
         ) then
-            raise notice 'Skipping RLS for %.%: no org_id column', 'public', table_name;
+            raise notice 'Skipping RLS for %.%: no org_id column', 'public', target_table;
             continue;
         end if;
 
-        execute format('alter table public.%I enable row level security', table_name);
+        execute format('alter table public.%I enable row level security', target_table);
 
-        policy_name := table_name || '_org_member';
+        policy_name := target_table || '_org_member';
         if not exists (
             select 1
             from pg_policies
             where schemaname = 'public'
-              and tablename = table_name
+              and tablename = target_table
               and policyname = policy_name
         ) then
             execute format(
@@ -91,7 +100,7 @@ begin
                 'where m.org_id = %I.org_id and m.user_id = auth.uid() and m.is_active = true)) '
                 'with check (exists (select 1 from public.org_members m '
                 'where m.org_id = %I.org_id and m.user_id = auth.uid() and m.is_active = true))',
-                policy_name, table_name, table_name, table_name
+                policy_name, target_table, target_table, target_table
             );
         end if;
     end loop;

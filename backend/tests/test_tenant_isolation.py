@@ -9,6 +9,7 @@ safe 404 instead of leaking record existence.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,7 +19,7 @@ from app.context import AuthUser, OrganizationContext
 from app.core.auth import get_current_user
 from app.core.enum.database import OrgRole, PlanType
 from app.core.ocm import get_org_context
-from app.core.permissions import MANAGE_FINANCE, VIEW_FINANCE
+from app.core.permissions import MANAGE_FINANCE, VIEW_DOCUMENTS, VIEW_FINANCE
 
 
 ORG_A = UUID("00000000-0000-0000-0000-0000000000a1")
@@ -34,7 +35,7 @@ def make_context(org_id: UUID) -> OrganizationContext:
         slug=f"org-{str(org_id)[-2:]}",
         plan=PlanType.FREE,
         role=OrgRole.OWNER,
-        permissions={VIEW_FINANCE, MANAGE_FINANCE},
+        permissions={VIEW_DOCUMENTS, VIEW_FINANCE, MANAGE_FINANCE},
         document_limit=100,
         default_currency="GBP",
         timezone="Europe/London",
@@ -177,3 +178,145 @@ async def test_worker_derives_organization_from_record_not_job(monkeypatch):
 
     assert result["status"] == "payment_ready"
     assert seen_orgs == [document_org]
+
+
+async def test_matching_worker_does_not_process_foreign_tenant_line_items(monkeypatch):
+    """Mis-scoped child rows must not enter another tenant's matching run."""
+    from tests.conftest import FakeDatabase
+    from app.core.enum.ap import APMatchStatus, InvoiceAPStatus
+    import app.workers.ap_matching_worker as worker_module
+
+    database = FakeDatabase()
+    document_id = uuid4()
+    document_org = uuid4()
+    other_org = uuid4()
+    foreign_line = {
+        "id": str(uuid4()),
+        "org_id": str(other_org),
+        "document_id": str(document_id),
+    }
+    database.seed(
+        "documents",
+        {
+            "id": str(document_id),
+            "org_id": str(document_org),
+            "document_type": "invoice",
+            "ap_enabled": True,
+            "ap_status": InvoiceAPStatus.MATCHING.value,
+        },
+    )
+    database.seed("document_line_items", foreign_line)
+
+    seen_lines = []
+
+    class FakeState:
+        async def transition(self, *_args, **_kwargs):
+            return None
+
+    class FakeMatchingService:
+        def __init__(self, _db):
+            pass
+
+        async def run(self, **kwargs):
+            seen_lines.extend(kwargs["line_items"])
+            return SimpleNamespace(status=APMatchStatus.EXCEPTION, exceptions=[object()])
+
+    monkeypatch.setattr(worker_module, "InvoiceStateMachine", lambda _db: FakeState())
+    monkeypatch.setattr(worker_module, "MatchingService", FakeMatchingService)
+
+    await worker_module.APMatchingWorker(db=database)._run_once(document_id=document_id)
+
+    assert seen_lines == []
+
+
+def test_export_denies_foreign_document_before_exporting(tenant_client, monkeypatch):
+    import app.routers.export_v2 as export_router
+
+    document_id = uuid4()
+    exported = []
+
+    class DocumentService:
+        async def get_document(self, _document_id):
+            return SimpleNamespace(org_id=ORG_A)
+
+    class ExportService:
+        async def export(self, **kwargs):
+            exported.append(kwargs)
+
+    monkeypatch.setattr(
+        export_router,
+        "get_container",
+        lambda: SimpleNamespace(
+            document_service=DocumentService(), export_service=ExportService()
+        ),
+    )
+    tenant_client.as_org(ORG_B)
+
+    response = tenant_client.get(f"/api/v2/export/{document_id}/csv")
+
+    assert response.status_code == 404
+    assert "Document not found" in response.text
+    assert str(document_id) not in response.text
+    assert exported == []
+
+
+def test_document_detail_denies_foreign_tenant(tenant_client, monkeypatch):
+    import app.routers.documents as documents_router
+
+    document_id = uuid4()
+
+    class DocumentService:
+        async def get_document(self, _document_id):
+            return SimpleNamespace(org_id=ORG_A)
+
+    monkeypatch.setattr(
+        documents_router,
+        "get_container",
+        lambda: SimpleNamespace(document_service=DocumentService()),
+    )
+    tenant_client.as_org(ORG_B)
+
+    response = tenant_client.get(f"/api/v2/documents/{document_id}")
+
+    assert response.status_code == 404
+    assert "Document not found" in response.text
+    assert str(document_id) not in response.text
+
+
+def test_foreign_document_does_not_create_a_signed_download(
+    tenant_client, fake_db, monkeypatch
+):
+    import app.routers.documents as documents_router
+
+    document_id = uuid4()
+    seed_document(
+        fake_db,
+        org_id=ORG_A,
+        document_id=document_id,
+        file_url="private/org-a/invoice.pdf",
+        file_name="invoice.pdf",
+        file_type="application/pdf",
+        status="complete",
+        processing_step="complete",
+        intelligence_status="complete",
+    )
+    signed = []
+
+    class StorageService:
+        async def create_signed_url(self, *, path, expires_in):
+            signed.append((path, expires_in))
+            return "https://storage.invalid/signed"
+
+    monkeypatch.setattr(documents_router, "get_supabase", lambda: fake_db)
+    monkeypatch.setattr(
+        documents_router,
+        "get_container",
+        lambda: SimpleNamespace(storage_service=StorageService()),
+    )
+    tenant_client.as_org(ORG_B)
+
+    response = tenant_client.get(f"/api/v2/documents/{document_id}/intelligence")
+
+    assert response.status_code == 404
+    assert "Document not found" in response.text
+    assert signed == []
