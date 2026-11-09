@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 from uuid import uuid4
 
 import pytest
 
 from app.core.enum.database import DocumentSource, DocumentStatus, DocumentType, PipelineStage
-from app.services.document.document_upload_service import DocumentUploadService
+from app.services.document.document_upload_service import (
+    DocumentUploadService,
+    DuplicateDocumentError,
+)
 from app.services.storage.attachment_scanner import (
     EICAR_SIGNATURE,
     QUARANTINE_PREFIX,
@@ -111,9 +115,10 @@ def test_signature_scanner_flags_eicar_and_pdf_javascript():
 class FakeDocumentService:
     def __init__(self):
         self.created = []
+        self.duplicate = None
 
     async def find_duplicate(self, *_args, **_kwargs):
-        return None
+        return self.duplicate
 
     async def create_document(self, document, allow_duplicate=False):
         self.created.append(document)
@@ -173,6 +178,48 @@ async def test_clean_pdf_is_stored_on_the_private_document_path(upload_service):
     assert storage.uploads[0]["content_type"] == "application/pdf"
     assert not storage.uploads[0]["path"].startswith(QUARANTINE_PREFIX)
     assert storage.uploads[0]["path"].endswith("invoice.pdf")
+    assert document.file_hash == hashlib.sha256(PDF_BYTES).hexdigest()
+    assert documents.created == [document]
+
+
+async def test_duplicate_hash_is_reviewable_without_replacing_original(upload_service):
+    service, documents, storage = upload_service
+    existing = type("ExistingDocument", (), {"id": uuid4(), "file_name": "earlier.pdf"})()
+    documents.duplicate = existing
+
+    with pytest.raises(DuplicateDocumentError) as error:
+        await _upload(
+            service,
+            content=PDF_BYTES,
+            declared="application/pdf",
+            filename="invoice.pdf",
+        )
+
+    assert error.value.existing_document_id == existing.id
+    assert error.value.existing_file_name == "earlier.pdf"
+    assert storage.uploads == []
+    assert documents.created == []
+
+
+async def test_confirmed_duplicate_gets_its_own_immutable_storage_path(upload_service):
+    service, documents, storage = upload_service
+    documents.duplicate = type("ExistingDocument", (), {"id": uuid4(), "file_name": "earlier.pdf"})()
+
+    document = await service.upload(
+        org_id=uuid4(),
+        user_id=uuid4(),
+        filename="invoice.pdf",
+        content_type="application/pdf",
+        content=PDF_BYTES,
+        industry="general",
+        document_type=DocumentType.INVOICE,
+        currency="GBP",
+        allow_duplicate=True,
+    )
+
+    assert document.file_hash == hashlib.sha256(PDF_BYTES).hexdigest()
+    assert len(storage.uploads) == 1
+    assert storage.uploads[0]["path"] != f"{document.org_id}/earlier.pdf"
     assert documents.created == [document]
 
 
