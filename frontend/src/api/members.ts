@@ -20,7 +20,7 @@ export interface OrgMember {
 
 export interface InviteMemberInput {
   email: string;
-  role: "owner" | "admin" | "ap_manager" | "member";
+  role: "admin" | "ap_member" | "approver";
   department?: string;
   spending_limit?: number;
 }

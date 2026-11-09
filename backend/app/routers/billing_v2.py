@@ -8,9 +8,23 @@ from app.core.container import get_container
 from app.core.limiter import limiter
 from app.core.authorization import require_permission
 from app.core.permissions import VIEW_BILLING, MANAGE_BILLING
-from app.core.plan import PLANS
+from app.core.plan import PLANS, get_plan
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
+
+
+def seat_summary(plan_name, members):
+    plan = get_plan(plan_name)
+    active = {str(m.user_id) for m in members if m.is_active and m.user_id}
+    pending = {str(m.id) for m in members if not m.is_active and m.invite_token}
+    included = 999_999 if plan.unlimited_seats else plan.seats
+    return {
+        "included": included,
+        "used": len(active),
+        "pending": len(pending),
+        "available": max(0, included - len(active) - len(pending)),
+        "additional_seat_rate": None,
+    }
 
 
 @router.get("/plans")
@@ -90,6 +104,15 @@ async def subscription(
             "limit_reached": ctx.remaining_documents <= 0,
         },
     }
+
+
+@router.get("/seats")
+async def seat_usage(
+    ctx: OrganizationContext = Depends(get_org_context),
+    _permission: None = Depends(require_permission(VIEW_BILLING)),
+):
+    members = await get_container().member_service.list_members(ctx.org_id)
+    return seat_summary(ctx.plan, members)
 
 
 @router.post("/cancel")

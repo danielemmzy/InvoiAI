@@ -27,9 +27,9 @@ from app.core.auth import get_current_user
 from app.core.enum.database import OrgRole
 from app.core.ocm import get_org_context
 from app.core.permissions import INVITE_MEMBERS, REMOVE_MEMBERS, VIEW_MEMBERS, MANAGE_AP_RULES, MANAGE_ROLES, MANAGE_APPROVAL_AUTHORITY
-from app.services.member_service import MemberService
 from app.core.container import get_container
 from app.core.mfa import require_fresh_mfa
+from app.core.plan import seat_limit_for
 
 router = APIRouter(prefix="/members", tags=["Members"])
 
@@ -71,6 +71,12 @@ async def invite_member(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     service = get_container().member_service
+
+    members = await service.list_members(ctx.org_id)
+    active_users = {str(member.user_id) for member in members if member.is_active and member.user_id}
+    pending_invites = {str(member.id) for member in members if not member.is_active and member.invite_token}
+    if len(active_users) + len(pending_invites) >= seat_limit_for(ctx.plan):
+        raise HTTPException(status_code=409, detail="SEAT_LIMIT_REACHED")
 
     membership = await service.members.create_membership(
         {

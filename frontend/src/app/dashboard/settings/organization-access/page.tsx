@@ -9,10 +9,9 @@ import { organizationAccessApi, ApprovalAuthority, ApprovalDelegation, Organizat
 
 type LimitDraft = { invoice: string; payment: string; supervisorId: string };
 const inviteRoles = [
-  { value: "owner", label: "Owner" },
-  { value: "admin", label: "Admin" },
-  { value: "ap_manager", label: "Manager" },
-  { value: "member", label: "Member" },
+  { value: "admin", label: "Workspace Admin" },
+  { value: "ap_member", label: "Invoice Reviewer" },
+  { value: "approver", label: "Approver" },
 ] as const;
 
 function personLabel(member?: OrgMember) {
@@ -31,7 +30,7 @@ export default function OrganizationAccessPage() {
   const [limitDrafts, setLimitDrafts] = useState<Record<string, LimitDraft>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
-  const [invite, setInvite] = useState({ email: "", role: "member" as (typeof inviteRoles)[number]["value"], department: "" });
+  const [invite, setInvite] = useState({ email: "", role: "ap_member" as (typeof inviteRoles)[number]["value"], department: "" });
 
   const reload = async () => {
     setLoading(true);
@@ -107,7 +106,7 @@ export default function OrganizationAccessPage() {
     try {
       await membersApi.invite({ email: invite.email.trim(), role: invite.role, department: invite.department.trim() || undefined });
       toast.success(`Invitation prepared for ${invite.email.trim()}.`);
-      setInvite({ email: "", role: "member", department: "" });
+      setInvite({ email: "", role: "ap_member", department: "" });
       await reload();
     } catch (error: any) {
       toast.error(error?.response?.data?.detail || "Could not invite this teammate.");
