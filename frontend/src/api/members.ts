@@ -12,6 +12,7 @@ export interface OrgMember {
   payment_approval_limit?: number | null;
   supervisor_id?: string | null;
   invite_email?: string | null;
+  invitation_status?: "active" | "pending" | "expired" | "cancelled";
   is_active: boolean;
   joined_at?: string | null;
   created_at: string;
@@ -25,6 +26,15 @@ export interface InviteMemberInput {
   spending_limit?: number;
 }
 
+export interface SeatSummary {
+  included: number | null;
+  used: number;
+  pending: number;
+  available: number | null;
+  unlimited: boolean;
+  additional_seat_rate: null;
+}
+
 export interface ApprovalLimitsInput {
   spending_limit?: number | null;
   payment_approval_limit?: number | null;
@@ -33,6 +43,7 @@ export interface ApprovalLimitsInput {
 
 export const membersApi = {
   list: async () => (await client.get<OrgMember[]>("/members")).data,
+  seats: async () => (await client.get<SeatSummary>("/billing/seats")).data,
   changeRole: async (membershipId: string, role: string) =>
     (await client.patch<OrgMember>(`/members/${membershipId}/role`, { role })).data,
   changeAccessRole: async (membershipId: string, roleId: string) =>
@@ -43,4 +54,8 @@ export const membersApi = {
     (await client.patch<OrgMember>(`/members/${membershipId}/approval-limits`, payload)).data,
   remove: async (membershipId: string) =>
     (await client.delete<{ status: string }>(`/members/${membershipId}`)).data,
+  resend: async (membershipId: string) =>
+    (await client.post(`/members/${membershipId}/resend`)).data,
+  cancelInvitation: async (membershipId: string) =>
+    (await client.post(`/members/${membershipId}/cancel-invitation`)).data,
 };

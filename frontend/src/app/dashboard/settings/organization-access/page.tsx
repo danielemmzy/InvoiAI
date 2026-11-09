@@ -3,8 +3,9 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import toast from "react-hot-toast";
 import { UserPlus, UsersRound } from "lucide-react";
+import { getErrorMessage } from "@/api/client";
 import DashboardLayout from "@/components/layout/DashboardLayout";
-import { membersApi, OrgMember } from "@/api/members";
+import { membersApi, OrgMember, SeatSummary } from "@/api/members";
 import { organizationAccessApi, ApprovalAuthority, ApprovalDelegation, OrganizationRoleProfile } from "@/api/organizationAccess";
 
 type LimitDraft = { invoice: string; payment: string; supervisorId: string };
@@ -24,6 +25,7 @@ function asText(value: number | string | null | undefined) {
 
 export default function OrganizationAccessPage() {
   const [members, setMembers] = useState<OrgMember[]>([]);
+  const [seats, setSeats] = useState<SeatSummary | null>(null);
   const [authorities, setAuthorities] = useState<ApprovalAuthority[]>([]);
   const [profiles, setProfiles] = useState<OrganizationRoleProfile[]>([]);
   const [delegations, setDelegations] = useState<ApprovalDelegation[]>([]);
@@ -35,10 +37,11 @@ export default function OrganizationAccessPage() {
   const reload = async () => {
     setLoading(true);
     try {
-      const [nextMembers, nextAuthorities, nextDelegations, nextProfiles] = await Promise.all([
-        membersApi.list(), organizationAccessApi.authorities(), organizationAccessApi.delegations(), organizationAccessApi.roles(),
+      const [nextMembers, nextSeats, nextAuthorities, nextDelegations, nextProfiles] = await Promise.all([
+        membersApi.list(), membersApi.seats(), organizationAccessApi.authorities(), organizationAccessApi.delegations(), organizationAccessApi.roles(),
       ]);
       setMembers(nextMembers);
+      setSeats(nextSeats);
       setAuthorities(nextAuthorities);
       setDelegations(nextDelegations);
       setProfiles(nextProfiles);
@@ -58,9 +61,24 @@ export default function OrganizationAccessPage() {
     }
   };
 
-  useEffect(() => { void reload(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void reload(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const profileByLegacyRole = useMemo(() => new Map(profiles.map((profile) => [profile.role_key, profile.id])), [profiles]);
+  const updateLegacyRole = async (member: OrgMember, role: string) => {
+    setSaving(member.id);
+    try {
+      await membersApi.changeRole(member.id, role);
+      toast.success("Access role updated.");
+      await reload();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not update this role."));
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const updateRole = async (member: OrgMember, roleId: string) => {
     setSaving(member.id);
@@ -68,8 +86,8 @@ export default function OrganizationAccessPage() {
       await membersApi.changeAccessRole(member.id, roleId);
       toast.success("Access role updated.");
       await reload();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.detail || "Could not update this role.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not update this role."));
     } finally {
       setSaving(null);
     }
@@ -92,8 +110,8 @@ export default function OrganizationAccessPage() {
       });
       toast.success("Approval authority updated.");
       await reload();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.detail || "Could not update approval authority.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not update approval authority."));
     } finally {
       setSaving(null);
     }
@@ -108,8 +126,8 @@ export default function OrganizationAccessPage() {
       toast.success(`Invitation prepared for ${invite.email.trim()}.`);
       setInvite({ email: "", role: "ap_member", department: "" });
       await reload();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.detail || "Could not invite this teammate.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not invite this teammate."));
     } finally {
       setSaving(null);
     }
@@ -121,8 +139,35 @@ export default function OrganizationAccessPage() {
       await organizationAccessApi.revokeDelegation(delegationId);
       toast.success("Delegation revoked.");
       await reload();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.detail || "Could not revoke the delegation.");
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not revoke the delegation."));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const updateInvitation = async (member: OrgMember, action: "resend" | "cancel") => {
+    setSaving(`invite:${member.id}`);
+    try {
+      if (action === "resend") await membersApi.resend(member.id);
+      else await membersApi.cancelInvitation(member.id);
+      toast.success(action === "resend" ? "Invitation resent." : "Invitation cancelled.");
+      await reload();
+    } catch (error) {
+      toast.error(getErrorMessage(error, `Could not ${action} this invitation.`));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const removeMember = async (member: OrgMember) => {
+    setSaving(`remove:${member.id}`);
+    try {
+      await membersApi.remove(member.id);
+      toast.success("Access removed.");
+      await reload();
+    } catch (error) {
+      toast.error(getErrorMessage(error, "Could not remove this member."));
     } finally {
       setSaving(null);
     }
@@ -135,6 +180,16 @@ export default function OrganizationAccessPage() {
       <div className="dash-subtitle">Give each person the right access, then set separate limits for bill and payment approvals.</div>
     </div>
 
+    <div className="card" style={{ marginBottom: 18 }} aria-label="Seat usage">
+      <div className="card-header"><span className="card-title">Workspace seats</span></div>
+      <div style={{ padding: 18 }}>
+        <strong>{seats ? (seats.unlimited ? "Unlimited seats" : `${seats.used} of ${seats.included} seats used`) : "Loading seat usage…"}</strong>
+        <div className="settings-sub" style={{ marginTop: 6 }}>
+          {seats ? `${seats.pending} pending invitation${seats.pending === 1 ? "" : "s"} · ${seats.unlimited ? "No seat limit" : `${seats.available} available`}. Additional seat pricing is not configured.` : ""}
+        </div>
+      </div>
+    </div>
+
     <div className="card" style={{ marginBottom: 18 }}>
       <div className="card-header"><span className="card-title"><UserPlus size={16} style={{ marginRight: 8, verticalAlign: "-2px" }} />Invite a teammate</span></div>
       <form onSubmit={inviteMember} style={{ padding: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
@@ -145,7 +200,7 @@ export default function OrganizationAccessPage() {
         <input aria-label="Department" placeholder="Department (optional)" value={invite.department} onChange={(event) => setInvite({ ...invite, department: event.target.value })} />
         <button className="btn-primary" type="submit" disabled={saving === "invite"}>{saving === "invite" ? "Inviting…" : "Invite"}</button>
       </form>
-      <div className="settings-sub" style={{ padding: "0 18px 18px" }}>Keep roles simple. Approval limits are managed separately below.</div>
+      <div className="settings-sub" style={{ padding: "0 18px 18px" }}>At the seat limit, add seats or remove access. Approval limits are managed separately below.</div>
     </div>
 
     <div className="card" style={{ marginBottom: 18 }}>
@@ -171,13 +226,14 @@ export default function OrganizationAccessPage() {
         const selectedRole = member.access_role_id || profileByLegacyRole.get(member.role) || "";
         return <div key={member.id} style={{ padding: 18, borderBottom: "1px solid #eee", display: "grid", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-            <div><strong>{personLabel(member)}</strong><div className="settings-sub">{member.department || "No department"} · {member.is_active ? "Active" : "Invitation pending"}</div></div>
-            {profiles.length ? <select aria-label={`Access role for ${personLabel(member)}`} value={selectedRole} disabled={saving === member.id} onChange={(event) => void updateRole(member, event.target.value)}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select> : <span className="settings-sub">{member.role}</span>}
+            <div><strong>{personLabel(member)}</strong><div className="settings-sub">{member.department || "No department"} · {member.invitation_status ?? (member.is_active ? "active" : "pending")}</div></div>
+            {member.is_active ? <button type="button" className="btn-secondary" onClick={() => void removeMember(member)} disabled={saving === `remove:${member.id}`}>Remove access</button> : member.invitation_status === "pending" || member.invitation_status === "expired" ? <span style={{ display: "flex", gap: 8 }}><button type="button" className="btn-secondary" onClick={() => void updateInvitation(member, "resend")} disabled={saving === `invite:${member.id}`}>Resend</button>{member.invitation_status === "pending" && <button type="button" className="btn-secondary" onClick={() => void updateInvitation(member, "cancel")} disabled={saving === `invite:${member.id}`}>Cancel invite</button>}</span> : null}
+            {profiles.length ? <select aria-label={`Access role for ${personLabel(member)}`} value={selectedRole} disabled={saving === member.id} onChange={(event) => void updateRole(member, event.target.value)}>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select> : <select aria-label={`Access role for ${personLabel(member)}`} value={member.role} disabled={saving === member.id} onChange={(event) => void updateLegacyRole(member, event.target.value)}>{inviteRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}{member.role === "owner" && <option value="owner">Owner</option>}</select>}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, alignItems: "end" }}>
             <label className="settings-sub">Bill approval limit<input aria-label={`Bill approval limit for ${personLabel(member)}`} inputMode="decimal" placeholder="Not configured" value={draft.invoice} onChange={(event) => setLimitDrafts({ ...limitDrafts, [member.id]: { ...draft, invoice: event.target.value } })} /></label>
             <label className="settings-sub">Payment approval limit<input aria-label={`Payment approval limit for ${personLabel(member)}`} inputMode="decimal" placeholder="Not configured" value={draft.payment} onChange={(event) => setLimitDrafts({ ...limitDrafts, [member.id]: { ...draft, payment: event.target.value } })} /></label>
-            <label className="settings-sub">Escalate to<select aria-label={`Supervisor for ${personLabel(member)}`} value={draft.supervisorId} onChange={(event) => setLimitDrafts({ ...limitDrafts, [member.id]: { ...draft, supervisorId: event.target.value } })}><option value="">No escalation</option>{members.filter((candidate) => candidate.id !== member.id && candidate.is_active).map((candidate) => <option key={candidate.id} value={candidate.id}>{personLabel(candidate)}</option>)}</select></label>
+            <label className="settings-sub">Escalation supervisor<select aria-label={`Supervisor for ${personLabel(member)}`} value={draft.supervisorId} onChange={(event) => setLimitDrafts({ ...limitDrafts, [member.id]: { ...draft, supervisorId: event.target.value } })}><option value="">No escalation</option>{members.filter((candidate) => candidate.id !== member.id && candidate.is_active).map((candidate) => <option key={candidate.id} value={candidate.id}>{personLabel(candidate)}</option>)}</select></label>
             <button type="button" className="btn-secondary" onClick={() => void updateLimits(member)} disabled={saving === `${member.id}:limits`}>{saving === `${member.id}:limits` ? "Saving…" : "Save limits"}</button>
           </div>
         </div>;

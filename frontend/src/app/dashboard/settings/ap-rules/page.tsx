@@ -20,7 +20,7 @@ import type { ApprovalRuleScope, ApprovalExecutionMode, ApproverType, ApprovalRu
 
 const EXECUTION_MODES: ApprovalExecutionMode[] = ["sequential", "parallel", "any_one", "group"];
 const APPROVER_TYPES: ApproverType[] = ["role", "user", "group"];
-const ROLE_OPTIONS = ["owner", "admin", "approver", "member"];
+const ROLE_OPTIONS = ["owner", "admin", "approver", "ap_member", "member"];
 
 function emptyDraft(scope: ApprovalRuleScope): ApprovalRuleCreate {
   return {
@@ -34,7 +34,7 @@ function emptyDraft(scope: ApprovalRuleScope): ApprovalRuleCreate {
   };
 }
 
-function NewRuleForm({ scope, groups, onClose }: { scope: ApprovalRuleScope; groups: { id: string; name: string }[]; onClose: () => void }) {
+function NewRuleForm({ scope, groups, members, onClose }: { scope: ApprovalRuleScope; groups: { id: string; name: string }[]; members: OrgMember[]; onClose: () => void }) {
   const [draft, setDraft] = useState<ApprovalRuleCreate>(emptyDraft(scope));
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [conditionsText, setConditionsText] = useState("");
@@ -109,7 +109,10 @@ function NewRuleForm({ scope, groups, onClose }: { scope: ApprovalRuleScope; gro
         )}
         {draft.approver_type === "user" && (
           <label>Approver user ID
-            <input value={draft.approver_id ?? ""} onChange={(e) => set("approver_id", e.target.value || null)} placeholder="UUID" />
+            <select value={draft.approver_id ?? ""} onChange={(e) => set("approver_id", e.target.value || null)}>
+              <option value="">Select an active approver…</option>
+              {members.filter((member) => member.is_active && member.role === "approver").map((member) => <option key={member.id} value={member.user_id}>{member.invite_email ?? member.user_id}</option>)}
+            </select>
           </label>
         )}
         {draft.approver_type === "group" && (
@@ -172,6 +175,7 @@ function NewRuleForm({ scope, groups, onClose }: { scope: ApprovalRuleScope; gro
 function RulesTable({ scope }: { scope: ApprovalRuleScope }) {
   const rules = useApprovalRules(scope);
   const groups = useApprovalGroups();
+  const members = useOrgMembers();
   const del = useDeleteApprovalRule();
   const [showForm, setShowForm] = useState(false);
 
@@ -187,7 +191,7 @@ function RulesTable({ scope }: { scope: ApprovalRuleScope }) {
       </div>
 
       {showForm && (
-        <NewRuleForm scope={scope} groups={groups.data ?? []} onClose={() => setShowForm(false)} />
+        <NewRuleForm scope={scope} groups={groups.data ?? []} members={members.data ?? []} onClose={() => setShowForm(false)} />
       )}
 
       {rules.isLoading ? (

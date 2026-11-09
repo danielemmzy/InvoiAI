@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Request, HTTPException, Response
 from pydantic import BaseModel
 from app.context import AuthUser, OrganizationContext
@@ -16,13 +17,14 @@ router = APIRouter(prefix="/billing", tags=["Billing"])
 def seat_summary(plan_name, members):
     plan = get_plan(plan_name)
     active = {str(m.user_id) for m in members if m.is_active and m.user_id}
-    pending = {str(m.id) for m in members if not m.is_active and m.invite_token}
-    included = 999_999 if plan.unlimited_seats else plan.seats
+    pending = {str(m.id) for m in members if not m.is_active and m.invite_token and (m.invite_expires_at is None or m.invite_expires_at > datetime.now(UTC))}
+    included = None if plan.unlimited_seats else plan.seats
     return {
         "included": included,
         "used": len(active),
         "pending": len(pending),
-        "available": max(0, included - len(active) - len(pending)),
+        "available": None if included is None else max(0, included - len(active) - len(pending)),
+        "unlimited": plan.unlimited_seats,
         "additional_seat_rate": None,
     }
 
