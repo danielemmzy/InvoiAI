@@ -421,6 +421,23 @@ function forwardUpstream(
   return response;
 }
 
+async function forwardMfaVerification(
+  upstream: Response,
+): Promise<NextResponse> {
+  const data = await upstream.json() as Record<string, unknown>;
+  const accessToken = typeof data.access_token === "string" ? data.access_token : null;
+  const refreshToken = typeof data.refresh_token === "string" ? data.refresh_token : null;
+  const response = NextResponse.json(
+    jsonWithoutTokens(data),
+    { status: upstream.status, headers: copyResponseHeaders(upstream) },
+  );
+  if (upstream.ok && accessToken && refreshToken) {
+    setSessionCookie(response, { accessToken, refreshToken });
+  }
+  clearLegacyCookies(response);
+  return response;
+}
+
 /* ============================================================
    LOGIN / SIGNUP
    ============================================================ */
@@ -804,7 +821,9 @@ async function proxyAuthenticatedRequest(
     return response;
   }
 
-  const response = forwardUpstream(upstream);
+  const response = path === "auth/mfa/verify"
+    ? await forwardMfaVerification(upstream)
+    : forwardUpstream(upstream);
   if (path === RESET_PASSWORD_PATH) {
     clearSessionCookie(response);
     clearLegacyCookies(response);

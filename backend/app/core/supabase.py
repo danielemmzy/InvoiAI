@@ -98,6 +98,13 @@ def get_public_supabase() -> Client:
     return _public_client
 
 
+def get_user_supabase(access_token: str) -> Client:
+    """Create a request-scoped Supabase client bound to one verified user token."""
+    client = create_client(settings.supabase_url, settings.supabase_anon_key)
+    client.auth.set_session(access_token, "")
+    return client
+
+
 # ============================================================
 # Health Check
 # ============================================================

@@ -8,7 +8,7 @@
   "start": "next start",
   "lint": "eslint .",
   "type-check": "tsc --noEmit",
-  "test": "node --test src/lib/otp.test.ts src/lib/google-oauth.test.ts src/lib/uploadErrors.test.ts"
+  "test": "node --test src/lib/otp.test.ts src/lib/google-oauth.test.ts src/lib/uploadErrors.test.ts src/lib/mfa-redirect.test.ts src/lib/mfa-qr.test.ts"
 },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

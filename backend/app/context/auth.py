@@ -60,6 +60,14 @@ class AuthUser(BaseModel):
 
     is_verified: bool = True
 
+    aal: str = "aal1"
+
+    token_issued_at: int | None = None
+
+    mfa_verified_at: int | None = None
+
+    session_id: str | None = None
+
     # Kept for compatibility with the remaining V1-facing routers
     # while the application migrates to organization-scoped V2
     # authorization. The authoritative subscription/plan source

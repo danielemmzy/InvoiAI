@@ -25,12 +25,16 @@ from __future__ import annotations
 
 import logging
 
+import jwt
+
 from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.context import AuthUser
 from app.core.error_handler import classify_exception, platform_error
 from app.core.supabase import get_supabase
+from app.services.auth.mfa_security import totp_verified_at
+from app.services.auth import mfa_service
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,13 @@ def validate_access_token(token: str) -> AuthUser:
             )
 
         user = response.user
+
+        # Supabase Auth validates this token above. Read assurance claims only
+        # after that server-side validation, then carry them to API guards.
+        claims = jwt.decode(
+            token,
+            options={"verify_signature": False, "verify_exp": False, "verify_aud": False},
+        )
 
         # Supabase user metadata is intentionally treated as optional.
         # Organization/role remain None when they are not present in the
@@ -78,6 +89,10 @@ def validate_access_token(token: str) -> AuthUser:
                 user.id,
                 supabase_verified=user.email_confirmed_at is not None,
             ),
+            aal=claims.get("aal") if claims.get("aal") in {"aal1", "aal2"} else "aal1",
+            token_issued_at=claims.get("iat") if isinstance(claims.get("iat"), int) else None,
+            session_id=claims.get("session_id") if isinstance(claims.get("session_id"), str) else None,
+            mfa_verified_at=totp_verified_at(claims.get("amr")),
         )
 
     except HTTPException:
@@ -129,7 +144,37 @@ async def get_current_user(
             detail="Authorization header missing",
         )
 
-    return validate_access_token(token)
+    user = validate_access_token(token)
+
+    path = request.url.path
+    if (
+        path.startswith("/api/v2/auth/mfa/")
+        or path in {"/api/v2/auth/logout", "/api/v2/auth/reset-password"}
+        or path.startswith("/api/v2/support/")
+    ):
+        return user
+
+    try:
+        if mfa_service.has_admin_membership(user.id):
+            factors = mfa_service.factors_for_user(token)
+            if not factors.totp:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "MFA_ENROLLMENT_REQUIRED",
+                        "message": "Set up an authenticator app before using your organization workspace.",
+                    },
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("admin_mfa_enrollment_check_failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "MFA_STATUS_UNAVAILABLE", "message": "We could not verify your authenticator setup."},
+        ) from exc
+
+    return user
 
 
 async def require_verified_user(

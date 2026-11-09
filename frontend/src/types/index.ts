@@ -136,6 +136,8 @@ export interface AuthResponse {
   org_id?: string | null;
   plan?: string | null;
   is_verified?: boolean;
+  mfa_enrollment_required?: boolean;
+  mfa_challenge_required?: boolean;
 }
 
 export interface SignupResponse {

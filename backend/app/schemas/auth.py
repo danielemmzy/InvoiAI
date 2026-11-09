@@ -91,6 +91,24 @@ class ResetPasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
+class MFAEnrollRequest(BaseModel):
+    friendly_name: str = Field(default="Authenticator app", min_length=1, max_length=80)
+
+
+class MFAChallengeRequest(BaseModel):
+    factor_id: str = Field(..., min_length=1, max_length=80)
+
+
+class MFAVerifyRequest(BaseModel):
+    factor_id: str = Field(..., min_length=1, max_length=80)
+    challenge_id: str = Field(..., min_length=1, max_length=80)
+    code: str = Field(..., pattern=r"^\d{6}$")
+
+
+class MFARecoveryRequest(BaseModel):
+    code: str = Field(..., min_length=16, max_length=48)
+
+
 # ============================================================
 # Responses
 # ============================================================
@@ -120,6 +138,8 @@ class AuthResponse(BaseModel):
     org_id: str | None = None
     plan: str | None = None
     is_verified: bool = True
+    mfa_enrollment_required: bool = False
+    mfa_challenge_required: bool = False
 
 
 class UserProfileResponse(BaseModel):

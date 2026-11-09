@@ -29,6 +29,7 @@ from app.core.ocm import get_org_context
 from app.core.permissions import INVITE_MEMBERS, REMOVE_MEMBERS, VIEW_MEMBERS, MANAGE_AP_RULES, MANAGE_ROLES, MANAGE_APPROVAL_AUTHORITY
 from app.services.member_service import MemberService
 from app.core.container import get_container
+from app.core.mfa import require_fresh_mfa
 
 router = APIRouter(prefix="/members", tags=["Members"])
 
@@ -60,7 +61,7 @@ async def list_members(
     return [m.model_dump(mode="json") for m in members]
 
 
-@router.post("/invite", status_code=201)
+@router.post("/invite", status_code=201, dependencies=[Depends(require_fresh_mfa)])
 async def invite_member(
     payload: InviteMemberRequest,
     user: AuthUser = Depends(get_current_user),
@@ -145,7 +146,7 @@ class MemberRoleRequest(BaseModel):
     role: OrgRole
 
 
-@router.patch("/{membership_id}/role")
+@router.patch("/{membership_id}/role", dependencies=[Depends(require_fresh_mfa)])
 async def change_member_role(
     membership_id: UUID,
     payload: MemberRoleRequest,
@@ -170,7 +171,7 @@ async def change_member_role(
     updated = await service.members.change_role(membership_id, payload.role)
     return updated.model_dump(mode="json")
 
-@router.patch("/{membership_id}/access-role/{role_id}")
+@router.patch("/{membership_id}/access-role/{role_id}", dependencies=[Depends(require_fresh_mfa)])
 async def change_member_access_role(
     membership_id: UUID,
     role_id: UUID,
@@ -202,7 +203,7 @@ async def change_member_access_role(
     updated = await service.members.update_membership(membership_id, updates)
     return updated.model_dump(mode="json") if updated else None
 
-@router.delete("/{membership_id}")
+@router.delete("/{membership_id}", dependencies=[Depends(require_fresh_mfa)])
 async def remove_member(
     membership_id: UUID,
     user: AuthUser = Depends(get_current_user),
@@ -215,7 +216,7 @@ async def remove_member(
     return {"status": "removed"}
 
 
-@router.patch("/{membership_id}/approval-limits")
+@router.patch("/{membership_id}/approval-limits", dependencies=[Depends(require_fresh_mfa)])
 async def set_approval_limits(
     membership_id: UUID,
     payload: MemberApprovalLimitsRequest,

@@ -11,6 +11,7 @@ from app.context import OrganizationContext
 from app.core.container import get_container
 from app.core.ocm import get_org_context
 from app.core.permissions import UPDATE_SETTINGS, VIEW_SETTINGS
+from app.core.mfa import require_fresh_mfa
 
 router = APIRouter(prefix="/organization-settings", tags=["Organization Settings"])
 
@@ -265,7 +266,7 @@ def _settings_payload(settings: Any) -> dict[str, Any]:
     return data
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_fresh_mfa)])
 async def get_organization_settings(ctx: OrganizationContext = Depends(get_org_context)):
     _require(ctx, VIEW_SETTINGS)
     service = get_container().organization_service
@@ -280,7 +281,7 @@ async def get_organization_settings(ctx: OrganizationContext = Depends(get_org_c
     }
 
 
-@router.patch("")
+@router.patch("", dependencies=[Depends(require_fresh_mfa)])
 async def update_organization_settings(
     payload: SettingsUpdateRequest,
     ctx: OrganizationContext = Depends(get_org_context),

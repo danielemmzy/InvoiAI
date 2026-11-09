@@ -15,13 +15,24 @@ from app.schemas.auth import (
     SignupResponse,
     UserProfileResponse,
     VerifyOtpRequest,
+    MFAEnrollRequest,
+    MFAChallengeRequest,
+    MFAVerifyRequest,
+    MFARecoveryRequest,
 )
 from app.core.auth import get_current_user, AuthUser, validate_access_token
+from app.core.mfa import require_recent_supabase_mfa
 from app.core.container import get_container
 from app.core.limiter import limiter
 from app.core.config import settings
 from app.core.error_handler import platform_error
 from app.services.auth.google_oauth import build_google_authorization_url
+from app.core.supabase import get_user_supabase
+from app.services.auth import mfa_service
+from app.services.auth.mfa_security import (
+    generate_recovery_codes,
+    is_recent_aal2,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +130,35 @@ def _response(r) -> AuthResponse:
             r.user.id,
             supabase_verified=r.user.email_confirmed_at is not None,
         ),
+    )
+
+
+def _mfa_login_state(user_id: str, access_token: str) -> tuple[bool, bool]:
+    if not mfa_service.has_admin_membership(user_id):
+        return False, False
+    factors = mfa_service.factors_for_user(access_token)
+    if not factors.totp:
+        return True, False
+    return False, True
+
+
+def _request_access_token(request: Request) -> str:
+    token = request.headers.get("authorization", "").removeprefix("Bearer ")
+    if not token:
+        token = request.cookies.get("access_token", "")
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return token
+
+
+def _require_recovery_or_recent_mfa(user: AuthUser) -> None:
+    if is_recent_aal2(user.aal, user.mfa_verified_at):
+        return
+    if mfa_service.has_recovery_step_up(user.id, user.session_id):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={"code": "MFA_STEP_UP_REQUIRED", "message": "Verify your authenticator or use a recovery code."},
     )
 
 
@@ -234,6 +274,20 @@ async def login(
         ) from exc
 
     auth_response = _response(result)
+    try:
+        (
+            auth_response.mfa_enrollment_required,
+            auth_response.mfa_challenge_required,
+        ) = _mfa_login_state(auth_response.user_id, auth_response.access_token)
+    except Exception as exc:
+        platform_exc = platform_error(exc)
+        if platform_exc is not None:
+            raise platform_exc from exc
+        logger.exception("login_mfa_state_failed")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "MFA_STATUS_UNAVAILABLE", "message": "We could not verify your authenticator setup."},
+        ) from exc
     _set_auth_cookies(response, auth_response.access_token, auth_response.refresh_token)
     return auth_response
 
@@ -297,6 +351,9 @@ async def google_oauth_exchange(request: Request, body: dict):
                 status_code=403,
                 detail="Verify your Google email before signing in.",
             )
+        mfa_enrollment_required, mfa_challenge_required = _mfa_login_state(
+            str(user.id), access_token
+        )
         return AuthResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -304,6 +361,8 @@ async def google_oauth_exchange(request: Request, body: dict):
             email=user.email,
             plan=user.plan,
             is_verified=True,
+            mfa_enrollment_required=mfa_enrollment_required,
+            mfa_challenge_required=mfa_challenge_required,
         )
     except HTTPException:
         raise
@@ -570,6 +629,178 @@ async def logout(
     return {
         "message": "Logged out successfully"
     }
+
+
+# ============================================================
+# TOTP MFA AND APP-OWNED RECOVERY CODES
+# ============================================================
+
+@router.get("/mfa/factors")
+@limiter.limit("30/minute")
+async def list_mfa_factors(
+    request: Request,
+    response: Response,
+    user: AuthUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    factors = mfa_service.factors_for_user(_request_access_token(request))
+    return {
+        "factors": [
+            {
+                "id": factor.id,
+                "friendly_name": factor.friendly_name,
+                "type": factor.factor_type,
+                "status": factor.status,
+                "created_at": factor.created_at.isoformat(),
+            }
+            for factor in factors.all
+        ],
+        "aal": user.aal,
+        "step_up_fresh": is_recent_aal2(user.aal, user.mfa_verified_at),
+    }
+
+
+@router.post("/mfa/enroll")
+@limiter.limit("5/minute")
+async def enroll_mfa_factor(
+    request: Request,
+    response: Response,
+    body: MFAEnrollRequest,
+    user: AuthUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    token = _request_access_token(request)
+    auth_client = get_user_supabase(token)
+    current = auth_client.auth.mfa.list_factors()
+    if current.totp:
+        _require_recovery_or_recent_mfa(user)
+    if any(factor.status == "unverified" for factor in current.all):
+        raise HTTPException(
+            status_code=409,
+            detail="Remove the pending authenticator setup before starting another.",
+        )
+    enrollment = auth_client.auth.mfa.enroll(
+        {
+            "factor_type": "totp",
+            "issuer": "InvoiAI",
+            "friendly_name": body.friendly_name,
+        }
+    )
+    return {
+        "factor_id": enrollment.id,
+        "friendly_name": enrollment.friendly_name,
+        "qr_code": enrollment.totp.qr_code if enrollment.totp else None,
+        "secret": enrollment.totp.secret if enrollment.totp else None,
+        "uri": enrollment.totp.uri if enrollment.totp else None,
+    }
+
+
+@router.post("/mfa/challenge")
+@limiter.limit("5/minute")
+async def challenge_mfa_factor(
+    request: Request,
+    response: Response,
+    body: MFAChallengeRequest,
+    user: AuthUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    challenge = get_user_supabase(_request_access_token(request)).auth.mfa.challenge(
+        {"factor_id": body.factor_id}
+    )
+    return {"challenge_id": challenge.id, "expires_at": challenge.expires_at}
+
+
+@router.post("/mfa/verify")
+@limiter.limit("5/minute")
+async def verify_mfa_factor(
+    request: Request,
+    response: Response,
+    body: MFAVerifyRequest,
+    user: AuthUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    token = _request_access_token(request)
+    auth_client = get_user_supabase(token)
+    factors = auth_client.auth.mfa.list_factors()
+    factor = next((item for item in factors.all if item.id == body.factor_id), None)
+    if factor is None:
+        raise HTTPException(status_code=404, detail="Authenticator not found.")
+
+    verified = auth_client.auth.mfa.verify(
+        {
+            "factor_id": body.factor_id,
+            "challenge_id": body.challenge_id,
+            "code": body.code,
+        }
+    )
+    recovery_codes: list[str] | None = None
+    if factor.status == "unverified":
+        recovery_codes, hashes = generate_recovery_codes()
+        mfa_service.replace_recovery_codes(user.id, hashes)
+    return {
+        "access_token": verified.access_token,
+        "refresh_token": verified.refresh_token,
+        "aal": "aal2",
+        "recovery_codes": recovery_codes,
+    }
+
+
+@router.post("/mfa/recovery")
+@limiter.limit("5/minute")
+async def use_mfa_recovery_code(
+    request: Request,
+    response: Response,
+    body: MFARecoveryRequest,
+    user: AuthUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    if not user.session_id:
+        raise HTTPException(status_code=401, detail="Session could not be verified.")
+    if not mfa_service.consume_recovery_code(user.id, user.session_id, body.code):
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "MFA_INVALID_RECOVERY_CODE", "message": "That recovery code is invalid or has already been used."},
+        )
+    return {"step_up_granted": True, "expires_in_seconds": 300}
+
+
+@router.post("/mfa/recovery-codes/regenerate")
+@limiter.limit("3/minute")
+async def regenerate_mfa_recovery_codes(
+    request: Request,
+    response: Response,
+    user: AuthUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    _require_recovery_or_recent_mfa(user)
+    codes, hashes = generate_recovery_codes()
+    mfa_service.replace_recovery_codes(user.id, hashes)
+    return {"recovery_codes": codes}
+
+
+@router.delete("/mfa/factors/{factor_id}")
+@limiter.limit("5/minute")
+async def remove_mfa_factor(
+    factor_id: str,
+    request: Request,
+    response: Response,
+    user: AuthUser = Depends(get_current_user),
+):
+    response.headers["Cache-Control"] = "no-store"
+    auth_client = get_user_supabase(_request_access_token(request))
+    factors = auth_client.auth.mfa.list_factors()
+    factor = next((item for item in factors.all if item.id == factor_id), None)
+    if factor is None:
+        raise HTTPException(status_code=404, detail="Authenticator not found.")
+    if factor.status == "verified":
+        require_recent_supabase_mfa(user)
+        if mfa_service.has_admin_membership(user.id) and len(factors.totp) <= 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Workspace administrators must keep at least one verified authenticator.",
+            )
+    removed = auth_client.auth.mfa.unenroll({"factor_id": factor_id})
+    return {"removed_factor_id": removed.id}
 
 
 # ============================================================

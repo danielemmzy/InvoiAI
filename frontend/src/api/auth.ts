@@ -15,6 +15,20 @@ export interface SignupPayload {
   mobile?: string;
 }
 
+export interface MfaFactor {
+  id: string;
+  friendly_name?: string | null;
+  type: string;
+  status: "verified" | "unverified";
+  created_at: string;
+}
+
+export interface MfaFactorsResponse {
+  factors: MfaFactor[];
+  aal: "aal1" | "aal2";
+  step_up_fresh: boolean;
+}
+
 export const authApi = {
   signup: async (
     payload: SignupPayload,
@@ -109,6 +123,43 @@ export const authApi = {
   resendVerification: async (
     email: string,
   ) => authApi.resendOtp(email),
+
+  mfaFactors: async () =>
+    (await client.get<MfaFactorsResponse>("/auth/mfa/factors")).data,
+
+  mfaEnroll: async (friendly_name: string) =>
+    (await client.post<{
+      factor_id: string;
+      friendly_name: string;
+      qr_code: string | null;
+      secret: string | null;
+      uri: string | null;
+    }>("/auth/mfa/enroll", { friendly_name })).data,
+
+  mfaChallenge: async (factor_id: string) =>
+    (await client.post<{ challenge_id: string; expires_at: number }>(
+      "/auth/mfa/challenge", { factor_id },
+    )).data,
+
+  mfaVerify: async (factor_id: string, challenge_id: string, code: string) =>
+    (await client.post<{ aal: "aal2"; recovery_codes: string[] | null }>(
+      "/auth/mfa/verify", { factor_id, challenge_id, code },
+    )).data,
+
+  mfaRecovery: async (code: string) =>
+    (await client.post<{ step_up_granted: boolean; expires_in_seconds: number }>(
+      "/auth/mfa/recovery", { code },
+    )).data,
+
+  mfaRegenerateRecoveryCodes: async () =>
+    (await client.post<{ recovery_codes: string[] }>(
+      "/auth/mfa/recovery-codes/regenerate",
+    )).data,
+
+  mfaRemoveFactor: async (factor_id: string) =>
+    (await client.delete<{ removed_factor_id: string }>(
+      `/auth/mfa/factors/${encodeURIComponent(factor_id)}`,
+    )).data,
 
   /*
    * Supabase password-reset token.

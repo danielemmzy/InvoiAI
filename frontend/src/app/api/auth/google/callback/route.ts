@@ -62,6 +62,8 @@ export async function GET(request: NextRequest) {
     const auth = await upstream.json() as {
       access_token?: unknown;
       refresh_token?: unknown;
+      mfa_enrollment_required?: unknown;
+      mfa_challenge_required?: unknown;
     };
     if (
       typeof auth.access_token !== "string" ||
@@ -70,7 +72,12 @@ export async function GET(request: NextRequest) {
       return finish(request, "/login?reason=google-failed");
     }
 
-    const response = finish(request, "/dashboard");
+    const destination = auth.mfa_enrollment_required === true
+      ? "/mfa?mode=enroll"
+      : auth.mfa_challenge_required === true
+        ? "/mfa?step_up=1"
+        : "/dashboard";
+    const response = finish(request, destination);
     response.cookies.set(getBffSessionCookieName(), encryptSession({
       accessToken: auth.access_token,
       refreshToken: auth.refresh_token,

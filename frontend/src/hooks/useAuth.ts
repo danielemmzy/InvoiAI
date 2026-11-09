@@ -196,7 +196,13 @@ export function useAuth() {
       password: string;
     }) => authApi.login(email, password),
 
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      if (result.mfa_enrollment_required || result.mfa_challenge_required) {
+        router.replace(
+          result.mfa_enrollment_required ? "/mfa?mode=enroll" : "/mfa?step_up=1",
+        );
+        return;
+      }
       try {
         /*
          * Authentication cookies are already set by the backend.

@@ -10,6 +10,7 @@ from app.core.container import get_container
 from app.core.limiter import limiter
 from app.core.authorization import require_permission
 from app.core.permissions import VIEW_DOCUMENTS
+from app.core.mfa import require_fresh_mfa
 
 router = APIRouter(
     prefix="/export",
@@ -36,7 +37,7 @@ async def _export(request, document_id, user, ctx, fmt):
     return {"url": result.url}
 
 
-@router.get("/{document_id}/excel")
+@router.get("/{document_id}/excel", dependencies=[Depends(require_fresh_mfa)])
 @limiter.limit("10/minute")
 async def excel(
     response: Response,
@@ -49,7 +50,7 @@ async def excel(
     return await _export(request, document_id, user, ctx, "excel")
 
 
-@router.get("/{document_id}/csv")
+@router.get("/{document_id}/csv", dependencies=[Depends(require_fresh_mfa)])
 @limiter.limit("10/minute")
 async def csv(
     response: Response,
@@ -62,7 +63,7 @@ async def csv(
     return await _export(request, document_id, user, ctx, "csv")
 
 
-@router.post("/{document_id}/sheets")
+@router.post("/{document_id}/sheets", dependencies=[Depends(require_fresh_mfa)])
 @limiter.limit("10/minute")
 async def sheets(
     response: Response,

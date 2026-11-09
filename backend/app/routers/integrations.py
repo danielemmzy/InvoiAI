@@ -12,6 +12,7 @@ from app.core.container import get_container
 from app.core.ocm import get_org_context
 from app.core.permissions import MANAGE_INTEGRATIONS, VIEW_INTEGRATIONS
 from app.core.config import settings
+from app.core.mfa import require_fresh_mfa
 from app.core.limiter import limiter
 from app.core.enum.database import IntegrationProvider
 from app.schemas.integration import IntegrationConnectionResponse
@@ -41,7 +42,7 @@ async def _require_permission(
         )
 
 
-@router.post("/quickbooks/connect")
+@router.post("/quickbooks/connect", dependencies=[Depends(require_fresh_mfa)])
 @limiter.limit("10/minute")
 async def connect_quickbooks(
     response: Response,
@@ -101,7 +102,7 @@ async def quickbooks_callback(
     )
 
 
-@router.post("/xero/connect")
+@router.post("/xero/connect", dependencies=[Depends(require_fresh_mfa)])
 @limiter.limit("10/minute")
 async def connect_xero(
     response: Response,
@@ -177,7 +178,7 @@ async def list_integrations(
     ]
 
 
-@router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_fresh_mfa)])
 async def disconnect_integration(
     connection_id: str,
     user: AuthUser = Depends(get_current_user),

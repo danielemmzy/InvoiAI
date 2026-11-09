@@ -3,6 +3,7 @@ import axios, {
   AxiosInstance,
   InternalAxiosRequestConfig,
 } from "axios";
+import { mfaRedirectFor } from "@/lib/mfa-redirect";
 
 const BASE_URL = "/api/bff";
 
@@ -195,14 +196,30 @@ client.interceptors.response.use(
           })
         | undefined;
 
-    if (
-      !original ||
-      !isBrowser() ||
-      error.response?.status !== 401
-    ) {
+    if (!original || !isBrowser()) {
       return Promise.reject(
         error,
       );
+    }
+
+    if (error.response?.status === 403) {
+      const redirect = mfaRedirectFor(
+        (error.response.data as { detail?: unknown } | undefined)?.detail,
+      );
+      if (redirect && window.location.pathname !== "/mfa") {
+        try {
+          sessionStorage.setItem(
+            "invoiai:mfa-return-to",
+            `${window.location.pathname}${window.location.search}${window.location.hash}`,
+          );
+        } catch { /* session storage may be unavailable */ }
+        window.location.replace(redirect);
+      }
+      return Promise.reject(error);
+    }
+
+    if (error.response?.status !== 401) {
+      return Promise.reject(error);
     }
 
     /*
