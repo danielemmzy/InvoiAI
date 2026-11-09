@@ -664,13 +664,12 @@ async def get_document_intelligence(
         try:
             signed_url = await get_container().storage_service.create_signed_url(
                 path=source_path,
-                expires_in=3600,
             )
             source_document = {
                 "url": signed_url,
                 "file_name": doc.get("file_name"),
                 "file_type": doc.get("file_type"),
-                "expires_in": 3600,
+                "expires_in": get_container().storage_service.MAX_SIGNED_URL_SECONDS,
             }
         except Exception:
             logger.exception(

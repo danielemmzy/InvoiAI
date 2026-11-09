@@ -9,7 +9,10 @@ and the declared type agrees with the detected type.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import PurePath
+
+from PIL import Image, UnidentifiedImageError
 
 from app.core.config import settings
 from app.core.enum.database import FileType
@@ -106,6 +109,17 @@ def inspect_upload(
         raise SpoofedFileTypeError(
             f"File extension .{extension} does not match the file content {detected}."
         )
+
+    # Magic bytes alone accept truncated or deliberately malformed files.
+    # Decode image structure and require a minimally complete PDF container.
+    try:
+        if detected.startswith("image/"):
+            with Image.open(BytesIO(content)) as image:
+                image.verify()
+        elif b"%%EOF" not in content[-2048:]:
+            raise UnsupportedFileContentError("PDF content is incomplete or malformed.")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise UnsupportedFileContentError("File content is malformed.") from exc
 
     return UploadInspection(
         content_type=detected,

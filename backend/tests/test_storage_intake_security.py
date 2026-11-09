@@ -20,6 +20,7 @@ from app.services.storage.file_inspection import (
     detect_content_type,
     inspect_upload,
 )
+from app.services.storage.storage import StorageService
 
 
 PDF_BYTES = b"%PDF-1.7\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
@@ -34,6 +35,15 @@ def test_content_detection_ignores_extension():
     assert detect_content_type(JPEG_BYTES) == "image/jpeg"
     assert detect_content_type(WEBP_BYTES) == "image/webp"
     assert detect_content_type(b"not a document") is None
+
+
+def test_truncated_image_with_valid_magic_is_rejected():
+    with pytest.raises(UnsupportedFileContentError):
+        inspect_upload(
+            content=PNG_BYTES,
+            declared_content_type="image/png",
+            filename="invoice.png",
+        )
 
 
 def test_declared_type_must_match_content():
@@ -62,6 +72,24 @@ def test_oversized_upload_is_rejected():
             filename="invoice.pdf",
             max_size_mb=0,
         )
+
+
+async def test_signed_downloads_are_short_lived_and_bounded():
+    class Bucket:
+        def create_signed_url(self, path, expires_in):
+            return {"signedURL": f"/{path}?ttl={expires_in}"}
+
+    class Storage:
+        def from_(self, _bucket):
+            return Bucket()
+
+    class Client:
+        storage = Storage()
+
+    service = StorageService(client=Client())
+    assert await service.create_signed_url(path="invoice.pdf") == "/invoice.pdf?ttl=300"
+    with pytest.raises(ValueError):
+        await service.create_signed_url(path="invoice.pdf", expires_in=301)
 
 
 def test_executable_content_is_rejected():

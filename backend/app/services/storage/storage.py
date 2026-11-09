@@ -26,6 +26,7 @@ class StorageService:
     """
 
     DOCUMENT_BUCKET = "documents"
+    MAX_SIGNED_URL_SECONDS = 300
 
     def __init__(
         self,
@@ -112,7 +113,7 @@ class StorageService:
                 content,
                 {
                     "content-type": content_type,
-                    "upsert": "true",
+                    "upsert": "false",
                 },
             )
         except Exception as exc:
@@ -218,7 +219,7 @@ class StorageService:
         self,
         *,
         path: str,
-        expires_in: int = 3600,
+        expires_in: int = MAX_SIGNED_URL_SECONDS,
     ) -> str:
         """
         Create a temporary signed URL.
@@ -227,8 +228,10 @@ class StorageService:
         if not path.strip():
             raise ValueError("Storage path cannot be empty.")
 
-        if expires_in <= 0:
-            raise ValueError("expires_in must be greater than zero.")
+        if not 0 < expires_in <= self.MAX_SIGNED_URL_SECONDS:
+            raise ValueError(
+                f"expires_in must be between 1 and {self.MAX_SIGNED_URL_SECONDS} seconds."
+            )
 
         try:
             response = self.client.storage.from_(
