@@ -9,6 +9,8 @@ from app.services.vendor.vendor_sync_service import VendorSyncService
 
 
 class QuickBooksVendorSync(BaseSyncService):
+    resource = "vendor"
+
     """
     Synchronize QuickBooks vendors.
 

@@ -12,7 +12,45 @@ class FakeProvider:
     name = "xero"
 
     async def sync(self):
-        return {"imported": 2, "updated": 1, "total": 3, "skipped": 0, "failed": 0}
+        return {"imported": 2, "updated": 1, "total": 3, "skipped": 0, "failed": 1,
+                "errors": [{"resource": "vendor", "external_id": "c-4", "error": "MappingError"}]}
+
+
+class ConnectionQuery:
+    def __init__(self, db):
+        self.db = db
+        self.filters = {}
+        self.operation = "select"
+        self.payload = None
+
+    def select(self, *_args):
+        return self
+
+    def update(self, payload):
+        self.operation, self.payload = "update", payload
+        return self
+
+    def eq(self, key, value):
+        self.filters[key] = value
+        return self
+
+    def limit(self, _limit):
+        return self
+
+    def execute(self):
+        rows = [row for row in self.db.connections if all(str(row.get(k)) == str(v) for k,v in self.filters.items())]
+        if self.operation == "update":
+            for row in rows:
+                row.update(self.payload)
+        return SimpleNamespace(data=rows)
+
+
+class ConnectionDb:
+    def __init__(self):
+        self.connections = [{"id": "connection-1", "org_id": "org", "provider": "xero", "is_active": True, "metadata": {}}]
+
+    def table(self, _table):
+        return ConnectionQuery(self)
 
 
 async def test_supplier_import_uses_explicit_provider_and_organization():
@@ -23,13 +61,19 @@ async def test_supplier_import_uses_explicit_provider_and_organization():
         calls.append((org_id, provider, db))
         return FakeProvider()
 
-    service = VendorImportService(db=object(), provider_resolver=resolve_provider)
+    db = ConnectionDb()
+    db.connections[0]["org_id"] = str(org_id)
+    service = VendorImportService(db=db, provider_resolver=resolve_provider)
 
     result = await service.import_suppliers(org_id=org_id, provider="xero")
 
     assert result["imported"] == 2
     assert result["updated"] == 1
     assert calls[0][0:2] == (org_id, "xero")
+    summary = db.connections[0]["metadata"]["supplier_import"]
+    assert summary["counts"] == {"total": 3, "imported": 2, "updated": 1, "skipped": 0, "failed": 1}
+    assert summary["errors"] == [{"resource": "vendor", "external_id": "c-4", "error": "MappingError"}]
+    assert summary["completed_at"]
 
 
 async def test_supplier_import_rejects_provider_mismatch():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from app.core.enum.database import IntegrationProvider
@@ -54,4 +55,24 @@ class VendorImportService:
         adapter = await self.provider_resolver(org_id=org_id, provider=provider, db=self.db)
         if adapter.name != provider:
             raise ValueError("Resolved accounting provider does not match the requested provider.")
-        return await adapter.sync()
+        result = await adapter.sync()
+        rows = (
+            self.db.table("integration_connections").select("id,metadata")
+            .eq("org_id", str(org_id)).eq("provider", provider)
+            .eq("is_active", True).limit(1).execute().data
+        )
+        if rows:
+            connection = rows[0]
+            counts = {key: result.get(key, 0) for key in ("total", "imported", "updated", "skipped", "failed")}
+            completed_at = datetime.now(UTC).isoformat()
+            metadata = dict(connection.get("metadata") or {})
+            metadata["supplier_import"] = {
+                "counts": counts,
+                "errors": result.get("errors", []),
+                "completed_at": completed_at,
+            }
+            self.db.table("integration_connections").update({"metadata": metadata}).eq(
+                "org_id", str(org_id)
+            ).eq("id", str(connection["id"])).execute()
+            result["completed_at"] = completed_at
+        return result

@@ -41,6 +41,7 @@ class BaseSyncService(ABC):
         updated = 0
         skipped = 0
         failed = 0
+        errors = []
 
         records = await self.fetch()
 
@@ -64,8 +65,14 @@ class BaseSyncService(ABC):
                 else:
                     updated += 1
 
-            except Exception:
+            except Exception as exc:
                 failed += 1
+                external_id = payload.get("ContactID") or payload.get("Id")
+                errors.append({
+                    "resource": self.resource,
+                    "external_id": str(external_id) if external_id is not None else None,
+                    "error": type(exc).__name__,
+                })
 
         return {
             "total": len(records),
@@ -73,6 +80,7 @@ class BaseSyncService(ABC):
             "updated": updated,
             "skipped": skipped,
             "failed": failed,
+            "errors": errors,
         }
 
     # =====================================================
@@ -113,3 +121,4 @@ class BaseSyncService(ABC):
             True  -> created
             False -> updated
         """
+    resource = "record"
