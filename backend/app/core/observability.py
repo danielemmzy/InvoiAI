@@ -144,7 +144,11 @@ def record_webhook(*, provider: str, result: str) -> None:
 
 
 def record_notification(*, channel: str, result: str) -> None:
-    metrics.increment("notification_delivery_total", channel=channel, result=result)
+    safe_channel = channel if channel in {"email", "sms", "in_app", "push"} else "other"
+    safe_result = result if result in {"success", "failed", "retrying"} else "other"
+    metrics.increment(
+        "notification_delivery_total", channel=safe_channel, result=safe_result
+    )
 
 
 def record_queue_age(*, queue: str, seconds: float) -> None:
