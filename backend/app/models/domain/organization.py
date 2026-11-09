@@ -40,6 +40,9 @@ class Organization(TimestampedEntity):
     ai_summary: str | None = None
     industry: str | None = None
     company_size: str | None = None
+    business_type: str | None = None
+    monthly_invoice_volume: str | None = None
+    accounting_software: str | None = None
     country: str | None = None
     currency: str
     tax_id: str | None = None

@@ -10,7 +10,7 @@ from app.routers import (
     copilot, finance, insights, organizations, vendors,
     auth_v2, billing_v2, export_v2, industries_v2, ap, goods_receipts, ap_email, workspaces,
     purchase_orders, ap_workflow, vendor_portal, vendor_credits, organization_access, organization_settings,
-    ops,
+    ops, onboarding,
 )
 
 from app.core.logging import configure_logging
@@ -146,6 +146,7 @@ V2_ROUTERS = [
     ap_workflow.router,
     ap_email.router,
     workspaces.router,
+    onboarding.router,
     purchase_orders.router,
     organization_access.router,
     organization_settings.router,

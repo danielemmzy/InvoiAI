@@ -262,7 +262,7 @@ export function useAuth() {
    *        ↓
    * ┌───────────────────────────────┐
    * │ No workspaces                 │
-   * │ → /workspace                  │
+   * │ → /onboarding                 │
    * └───────────────────────────────┘
    *
    * OR
@@ -282,13 +282,12 @@ export function useAuth() {
        *
        * The account exists, but no workspace has been created yet.
        *
-       * This is the exact point where Personal vs Business
-       * onboarding should appear.
+       * This is the point where the resumable business setup should appear.
        */
       if (!workspaces || workspaces.length === 0) {
         setActiveWorkspace(null);
 
-        window.location.replace("/workspace");
+        window.location.replace("/onboarding");
 
         return;
       }
