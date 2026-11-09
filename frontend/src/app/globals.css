@@ -624,9 +624,6 @@ CSS_BEGIN
 .dash-topbar {
   position: sticky; top: 0; z-index: 30;
   height: 56px; padding: 0 32px;
-  background: rgba(247,244,238,0.92);
-  backdrop-filter: blur(12px);
-  border-bottom: 0.5px solid #E2DDD4;
   display: flex; align-items: center; justify-content: space-between;
 }
 .topbar-left { display: flex; align-items: center; gap: 12px; }
@@ -2226,7 +2223,7 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 .user-pill:hover { background: rgba(255,255,255,.08); }.user-name { color: #fff; }.user-plan, .logout-btn { color: #B9C6E7; }.avatar { background: #93F3CA; color: #10152D; }.plan-dot { background: #93F3CA; }
 
 .dash-main { background: #F4F7FF; }.dash-main.expanded { margin-left: 76px; }
-.dash-topbar { height: 72px; padding: 0 36px; background: rgba(244,247,255,.88); border-color: rgba(16,21,45,.08); backdrop-filter: blur(18px); }
+.dash-topbar { height: 72px; padding: 0 36px; }
 .topbar-toggle, .topbar-hamburger { width: 40px; height: 40px; border: 1px solid #DCE3F7; border-radius: 11px; background: #fff; color: #10152D; display: inline-grid; place-items: center; }
 .usage-pill { padding: 7px 12px; background: #EAFBF3; color: #176A4A; font-weight: 700; }
 .dash-body { max-width: 1540px; margin: 0 auto; padding: 38px; }
@@ -2356,3 +2353,4 @@ a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
 .payment-release-list { overflow:hidden; border:1px solid var(--ia-line); border-radius:18px; background:#fff; box-shadow:0 10px 30px rgba(18,43,77,.055); }.payment-release-list-head { display:grid; grid-template-columns:minmax(260px,1.25fr) minmax(180px,.75fr); padding:13px 20px; border-bottom:1px solid #e6ebf2; background:#f7f9fc; color:#718099; font-size:10px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }.payment-release-list-head span:last-child { grid-column:2 / 3; }.payment-release-row { display:grid; grid-template-columns:minmax(260px,1.25fr) minmax(110px,.5fr) minmax(190px,.9fr) auto; align-items:center; gap:18px; padding:18px 20px; border-bottom:1px solid #edf0f5; transition:background .18s ease; }.payment-release-row:last-child { border-bottom:0; }.payment-release-row:hover { background:#fbfcff; }.payment-release-bill { display:grid; grid-template-columns:minmax(120px,1fr) auto; gap:3px 12px; align-items:baseline; min-width:0; }.payment-release-vendor { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ia-ink); font-size:14px; font-weight:750; }.payment-release-invoice { color:#5272aa; font-size:12px; font-weight:700; text-decoration:none; }.payment-release-invoice:hover { color:#193f82; text-decoration:underline; }.payment-release-due { grid-column:1 / -1; color:#7c899a; font-size:12px; }.payment-release-amount { color:var(--ia-ink); font-size:14px; letter-spacing:-.02em; white-space:nowrap; }.payment-release-status { display:grid; justify-items:start; gap:5px; min-width:0; }.payment-release-status > span:last-child { max-width:100%; overflow:hidden; color:#8b5261; font-size:11px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }.payment-release-actions { display:flex; justify-content:flex-end; align-items:center; gap:7px; }.payment-release-actions .btn-quiet { display:inline-flex; align-items:center; gap:5px; }.payment-release-actions .btn-quiet span { font-size:12px; }
 @media (max-width:900px) { .payment-release-row { grid-template-columns:1fr auto; gap:13px; }.payment-release-status { grid-column:1 / 2; }.payment-release-actions { grid-column:2 / 3; grid-row:2; }.payment-release-list-head { grid-template-columns:1fr; }.payment-release-list-head span:last-child { display:none; } }
 @media (max-width:620px) { .payment-queue-summary { grid-template-columns:1fr; }.payment-summary-card { min-height:98px; }.payment-release-row { padding:16px; }.payment-release-bill { grid-template-columns:1fr; gap:3px; }.payment-release-amount { align-self:start; }.payment-release-actions .btn-quiet span { display:none; }.payment-release-actions .btn-quiet { padding:8px; }.payment-release-actions .btn-danger-outline { padding:7px 9px; font-size:11px; } }
+.dash-body .ds-data-surface { background: var(--surface-raised); border: 1px solid var(--border-subtle) !important; box-shadow: var(--elevation-1); }

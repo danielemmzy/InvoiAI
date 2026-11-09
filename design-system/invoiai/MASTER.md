@@ -92,9 +92,10 @@ panel, never behind the financial value a user is deciding on.
 
 The dashboard (`/dashboard`) is the representative product screen:
 
-- Topbar and sidebar use the glass primitive with an opaque fallback.
+- The topbar uses `.ds-glass`; the dark sidebar stays opaque so its navigation labels retain contrast.
 - Overview module cards use `.ds-gloss` over an opaque card.
-- All surfaces, ink, borders, radii and shadows resolve from the token layer.
+- Usage, document and activity cards use `.ds-data-surface`; data, form, review and approval content never sits on glass.
+- The token primitives and focus ring are global; legacy screen colors remain in migration and are not described as tokenized until converted.
 - Keyboard focus uses the shared 3px ring; reduced motion collapses
   transitions to 0.01ms.
 
@@ -129,9 +130,9 @@ The dashboard (`/dashboard`) is the representative product screen:
 - Specimen: `design-system/invoiai/evidence/token-preview.html`
 - Screenshots: `design-system/invoiai/evidence/desktop-light.png`,
   `desktop-dark.png`, `mobile-light.png`, `reduced-motion.png`
-- Checks: contrast table above; `npm run type-check` and `npm run build` pass;
-  keyboard focus uses the shared ring; reduced motion collapses transitions;
-  mobile specimen renders at 390px.
+- Checks: contrast table above; keyboard focus uses the shared ring; reduced
+  motion collapses transitions; mobile specimen is captured at 520px, where
+  the mobile breakpoint is active and the invoice table scrolls independently.
 
 ## Known follow-ups
 
