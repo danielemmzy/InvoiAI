@@ -6,6 +6,7 @@ from uuid import UUID
 from app.repositories.document.document_repository import (
     DocumentRepository,
 )
+from app.core.observability import record_extraction
 from app.core.error_handler import classify_exception, safe_user_message
 
 from app.services.ocr.ocr_service import (
@@ -81,15 +82,14 @@ class OCRWorker(BaseWorker):
             )
 
         except Exception as exc:
+            record_extraction(result="failed")
 
             descriptor = classify_exception(exc)
             logger.error(
-                "OCRWorker document failed: document_id=%s code=%s service=%s retryable=%s",
-                document_id,
+                "OCRWorker document failed: code=%s service=%s retryable=%s",
                 descriptor.code,
                 descriptor.service,
                 descriptor.retryable,
-                exc_info=True,
             )
 
             if not descriptor.retryable or getattr(self, "_current_attempt", self.retries) >= self.retries:
@@ -116,6 +116,7 @@ class OCRWorker(BaseWorker):
 
             raise
 
+        record_extraction(result="success")
         logger.info(
             "OCRWorker document completed: "
             "document_id=%s",
@@ -160,15 +161,8 @@ class OCRWorker(BaseWorker):
                 failed += 1
 
                 logger.error(
-                    "OCRWorker pending document failed: "
-                    "document_id=%s "
-                    "file_name=%s "
-                    "error_type=%s "
-                    "error=%s",
-                    document.id,
-                    document.file_name,
+                    "OCRWorker pending document failed: error_type=%s",
                     type(exc).__name__,
-                    str(exc),
                 )
 
         logger.info(

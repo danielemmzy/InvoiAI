@@ -17,7 +17,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         duration = round((time.perf_counter() - start) * 1000, 2)
 
         route = request.scope.get("route")
-        route_path = getattr(route, "path", request.url.path)
+        # Never use the raw URL as a metric label: unmatched paths may contain
+        # customer identifiers or arbitrary attacker-controlled values.
+        route_path = getattr(route, "path", None) or "unmatched"
 
         record_api_request(
             method=request.method,
@@ -29,7 +31,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         logger.info(
             "request_completed",
             method=request.method,
-            path=request.url.path,
+            route=route_path,
             status=response.status_code,
             duration_ms=duration,
             client_ip=request.client.host if request.client else "unknown",
