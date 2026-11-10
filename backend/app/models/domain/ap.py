@@ -74,6 +74,7 @@ class InvoiceCoding(TimestampedEntity):
     tax_code_id: UUID | None = None
     amount: Decimal | None = None
     confidence: Decimal = Decimal("0")
+    reasoning: str | None = None
     source: APCodingSource = APCodingSource.MANUAL
     coding_rule_id: UUID | None = None
     status: APCodingStatus = APCodingStatus.PENDING

@@ -26,9 +26,9 @@ from app.services.ap.chart_of_accounts_seed import seed_starter_chart_of_account
 from app.services.ap.recovery_service import APRecoveryService, is_stale
 from app.services.ap.email_address_service import manage_email_address
 from app.services.audit_service import AuditService
-from app.core.enum.database import IntegrationProvider
-from app.repositories.integration.integration_repository import (
-    IntegrationConnectionRepository,
+from app.services.ap.provider.accounting_provider import (
+    NoActiveAccountingProviderError,
+    get_accounting_provider,
 )
 
 from app.core.enum.ap import InvoiceAPStatus
@@ -424,7 +424,7 @@ async def approve_codings(
     rows = (
         db()
         .table("invoice_codings")
-        .select("id,status")
+        .select("id,status,gl_account_id,line_item_id")
         .eq("org_id", str(ctx.org_id))
         .eq("document_id", str(document_id))
         .execute()
@@ -433,6 +433,20 @@ async def approve_codings(
     )
     if not rows:
         raise HTTPException(404, "No codings found")
+    line_items = db().table("document_line_items").select("id").eq(
+        "org_id", str(ctx.org_id)
+    ).eq("document_id", str(document_id)).execute().data or []
+    coding_line_ids = {str(row.get("line_item_id")) for row in rows if row.get("line_item_id")}
+    if any(str(line.get("id")) not in coding_line_ids for line in line_items):
+        raise HTTPException(409, "Assign an active postable account to every invoice line before approving coding.")
+    for row in rows:
+        account = db().table("chart_of_accounts").select(
+            "id,is_active,is_postable"
+        ).eq("org_id", str(ctx.org_id)).eq(
+            "id", str(row.get("gl_account_id"))
+        ).limit(1).execute().data or []
+        if not account or not account[0].get("is_active") or not account[0].get("is_postable"):
+            raise HTTPException(409, "Assign an active postable account to every invoice line before approving coding.")
     if any(
         r.get("status") not in {"needs_review", "auto_coded", "approved"} for r in rows
     ):
@@ -493,7 +507,7 @@ async def save_line_coding(
     database = db()
     account = (
         database.table("chart_of_accounts")
-        .select("id,account_code,account_name,is_postable")
+        .select("id,account_code,account_name,is_postable,is_active")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(body.gl_account_id))
         .limit(1)
@@ -505,6 +519,8 @@ async def save_line_coding(
         raise HTTPException(404, "GL account not found")
     if not account[0].get("is_postable"):
         raise HTTPException(409, "Selected account is not postable")
+    if not account[0].get("is_active"):
+        raise HTTPException(409, "Selected account is inactive")
 
     payload = {
         "org_id": str(ctx.org_id),
@@ -522,7 +538,7 @@ async def save_line_coding(
 
     existing = (
         database.table("invoice_codings")
-        .select("id")
+        .select("id,gl_account_id,status")
         .eq("org_id", str(ctx.org_id))
         .eq("document_id", str(document_id))
         .eq("line_item_id", str(line_item_id))
@@ -532,7 +548,14 @@ async def save_line_coding(
         or []
     )
 
+    changed_approved_coding = bool(
+        existing
+        and existing[0].get("status") == "approved"
+        and existing[0].get("gl_account_id") != str(body.gl_account_id)
+    )
     if existing:
+        if changed_approved_coding:
+            payload.update({"status": "needs_review", "approved_by": None})
         database.table("invoice_codings").update(payload).eq("id", existing[0]["id"]).execute()
     else:
         database.table("invoice_codings").insert(payload).execute()
@@ -543,6 +566,29 @@ async def save_line_coding(
         "gl_account_code": account[0]["account_code"],
         "gl_account_name": account[0]["account_name"],
     }).eq("org_id", str(ctx.org_id)).eq("id", str(line_item_id)).execute()
+
+    if changed_approved_coding:
+        workflows = database.table("approval_workflows").select("id,status").eq(
+            "org_id", str(ctx.org_id)
+        ).eq("document_id", str(document_id)).execute().data or []
+        for workflow in workflows:
+            if workflow.get("status") in {"pending", "in_review", "approved"}:
+                database.table("approval_workflows").update({"status": "cancelled"}).eq(
+                    "org_id", str(ctx.org_id)
+                ).eq("id", str(workflow["id"])).execute()
+        database.table("documents").update({
+            "status": "needs_review",
+            "ap_status": "coding",
+            "gl_coding_status": "needs_review",
+        }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+        await _audit_finance_change(
+            ctx,
+            action="ap.gl_coding_changed_after_approval",
+            resource_type="document",
+            resource_id=document_id,
+            old_values={"gl_account_id": existing[0].get("gl_account_id")},
+            new_values={"gl_account_id": str(body.gl_account_id), "approval_revoked": True},
+        )
 
     return {"saved": True, "gl_account": account[0]}
 
@@ -561,7 +607,7 @@ async def create_coding_rule(
     database = db()
     account = (
         database.table("chart_of_accounts")
-        .select("id,is_postable")
+        .select("id,is_postable,is_active")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(body.gl_account_id))
         .limit(1)
@@ -573,6 +619,8 @@ async def create_coding_rule(
         raise HTTPException(404, "GL account not found")
     if not account[0].get("is_postable"):
         raise HTTPException(409, "Selected account is not postable")
+    if not account[0].get("is_active"):
+        raise HTTPException(409, "Selected account is inactive")
 
     payload = {
         "org_id": str(ctx.org_id),
@@ -779,7 +827,7 @@ async def sync_chart_of_accounts(
     ctx: OrganizationContext = Depends(get_org_context),
     _: None = Depends(require_permission(MANAGE_FINANCE)),
 ):
-    """Import the organization's QuickBooks Chart of Accounts into InvoiAI."""
+    """Import the active accounting provider's Chart of Accounts."""
     redis = await get_redis()
     lock = redis.lock(f"invoiai:coa:sync:{ctx.org_id}", timeout=600, blocking=False)
     if not await lock.acquire():
@@ -787,32 +835,22 @@ async def sync_chart_of_accounts(
             status_code=409, detail="Chart of Accounts sync is already running."
         )
     try:
-        connection = await IntegrationConnectionRepository().get_org_connection(
-            ctx.org_id,
-            IntegrationProvider.QUICKBOOKS,
-        )
-        if not connection or not connection.is_active or not connection.realm_id:
-            raise HTTPException(
-                status_code=409,
-                detail="Connect an active QuickBooks accounting connection first.",
-            )
-
         try:
-            result = await ChartOfAccountsService().sync_from_quickbooks(
-                ctx.org_id,
-                connection.realm_id,
-            )
+            provider = await get_accounting_provider(ctx.org_id, db())
+            result = await provider.sync_chart_of_accounts(org_id=ctx.org_id)
+        except NoActiveAccountingProviderError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             logging.getLogger(__name__).exception(
-                "QuickBooks Chart of Accounts sync failed", exc_info=exc
+                "Chart of Accounts sync failed", exc_info=exc
             )
             raise HTTPException(
                 status_code=502,
-                detail="QuickBooks Chart of Accounts sync failed. Please retry shortly.",
+                detail="Chart of Accounts sync failed. Please retry shortly.",
             ) from exc
 
         return {
-            "provider": "quickbooks",
+            "provider": provider.name,
             "status": "completed",
             **result,
         }

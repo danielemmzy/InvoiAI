@@ -99,6 +99,92 @@ def test_save_line_coding_non_postable_account(ap_api):
     assert "not postable" in response.json()["detail"]["message"]
 
 
+def test_save_line_coding_inactive_account_fails(ap_api):
+    org_id = ap_api.org_id
+    gl_account_id = uuid4()
+    account = _account(org_id, gl_account_id)
+    account["is_active"] = False
+    ap_api.db.seed("chart_of_accounts", account)
+
+    response = ap_api.client.put(
+        f"/api/v2/ap/codings/{uuid4()}/line/{uuid4()}",
+        json={"gl_account_id": str(gl_account_id)},
+    )
+
+    assert response.status_code == 409
+    assert "inactive" in response.json()["detail"]["message"]
+
+
+def test_changing_coding_revokes_existing_document_approval(ap_api):
+    org_id = ap_api.org_id
+    document_id, line_item_id = uuid4(), uuid4()
+    old_account_id, new_account_id = uuid4(), uuid4()
+    ap_api.db.seed(
+        "chart_of_accounts",
+        _account(org_id, old_account_id, code="1200"),
+        _account(org_id, new_account_id, code="1210"),
+    )
+    ap_api.db.seed("documents", {
+        "id": str(document_id), "org_id": str(org_id), "status": "approved",
+        "ap_status": "approved", "gl_coding_status": "approved",
+    })
+    ap_api.db.seed("invoice_codings", {
+        "id": "coding-1", "org_id": str(org_id), "document_id": str(document_id),
+        "line_item_id": str(line_item_id), "gl_account_id": str(old_account_id),
+        "status": "approved",
+    })
+    ap_api.db.seed("approval_workflows", {
+        "id": "workflow-1", "org_id": str(org_id),
+        "document_id": str(document_id), "status": "in_review",
+    })
+
+    response = ap_api.client.put(
+        f"/api/v2/ap/codings/{document_id}/line/{line_item_id}",
+        json={"gl_account_id": str(new_account_id)},
+    )
+
+    assert response.status_code == 200
+    coding = ap_api.db.tables["invoice_codings"][0]
+    document = ap_api.db.tables["documents"][0]
+    assert coding["status"] == "needs_review"
+    assert coding.get("approved_by") is None
+    assert document["status"] == "needs_review"
+    assert document["ap_status"] == "coding"
+    assert document["gl_coding_status"] == "needs_review"
+    assert ap_api.db.tables["approval_workflows"][0]["status"] == "cancelled"
+
+
+def test_approve_codings_rejects_inactive_account(ap_api):
+    org_id, document_id, line_id, account_id = ap_api.org_id, uuid4(), uuid4(), uuid4()
+    account = _account(org_id, account_id)
+    account["is_active"] = False
+    ap_api.db.seed("chart_of_accounts", account)
+    ap_api.db.seed("document_line_items", {"id": str(line_id), "org_id": str(org_id), "document_id": str(document_id)})
+    ap_api.db.seed("invoice_codings", {
+        "id": "coding-1", "org_id": str(org_id), "document_id": str(document_id),
+        "line_item_id": str(line_id), "gl_account_id": str(account_id), "status": "auto_coded",
+    })
+
+    response = ap_api.client.post(f"/api/v2/ap/codings/{document_id}/approve")
+
+    assert response.status_code == 409
+    assert "active postable account" in response.json()["detail"]["message"]
+
+
+def test_approve_codings_rejects_unassigned_invoice_line(ap_api):
+    org_id, document_id, line_id = ap_api.org_id, uuid4(), uuid4()
+    ap_api.db.seed("document_line_items", {"id": str(line_id), "org_id": str(org_id), "document_id": str(document_id)})
+    ap_api.db.seed("invoice_codings", {
+        "id": "coding-1", "org_id": str(org_id), "document_id": str(document_id),
+        "line_item_id": str(uuid4()), "gl_account_id": str(uuid4()), "status": "auto_coded",
+    })
+
+    response = ap_api.client.post(f"/api/v2/ap/codings/{document_id}/approve")
+
+    assert response.status_code == 409
+    assert "every invoice line" in response.json()["detail"]["message"]
+
+
 def test_save_line_coding_account_not_found(ap_api):
     response = ap_api.client.put(
         f"/api/v2/ap/codings/{uuid4()}/line/{uuid4()}",
@@ -153,6 +239,22 @@ def test_create_coding_rule_non_postable_fails(ap_api):
 
     assert response.status_code == 409
     assert "not postable" in response.json()["detail"]["message"]
+
+
+def test_create_coding_rule_inactive_account_fails(ap_api):
+    org_id = ap_api.org_id
+    account_id = uuid4()
+    account = _account(org_id, account_id)
+    account["is_active"] = False
+    ap_api.db.seed("chart_of_accounts", account)
+
+    response = ap_api.client.post(
+        "/api/v2/ap/coding-rules",
+        json={"name": "Inactive rule", "gl_account_id": str(account_id)},
+    )
+
+    assert response.status_code == 409
+    assert "inactive" in response.json()["detail"]["message"]
 
 
 def test_list_coding_rules(ap_api):

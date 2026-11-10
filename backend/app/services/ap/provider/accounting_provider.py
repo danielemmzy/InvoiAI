@@ -36,6 +36,10 @@ class NoActiveAccountingProviderError(AccountingProviderError):
     pass
 
 
+class AmbiguousAccountingProviderError(AccountingProviderError):
+    pass
+
+
 class AccountingProvider(ABC):
 
     name: str = "abstract"
@@ -75,8 +79,8 @@ class AccountingProvider(ABC):
 async def get_accounting_provider(org_id: UUID, db=None) -> AccountingProvider:
     """
     Resolves the org's configured, active accounting provider.
-    Today this can only ever return a QuickBooksAccountingProvider
-    or raise — there is nothing else configured for any org yet.
+    The single active connection is the dispatch key. Unsupported provider
+    imports remain unavailable until their provider tickets are proven.
     """
     from app.core.enum.database import IntegrationProvider
     from app.core.supabase import get_supabase
@@ -84,24 +88,24 @@ async def get_accounting_provider(org_id: UUID, db=None) -> AccountingProvider:
 
     database = db or get_supabase()
 
-    qb_connection = (
-        database.table("integration_connections").select("id")
-        .eq("org_id", str(org_id)).eq("provider", IntegrationProvider.QUICKBOOKS.value)
-        .eq("is_active", True).limit(1).execute().data
+    connections = (
+        database.table("integration_connections").select("id,provider")
+        .eq("org_id", str(org_id)).eq("is_active", True).execute().data
+        or []
     )
-    if qb_connection:
-        return QuickBooksAccountingProvider(org_id=org_id, db=database)
-
-    xero_connection = (
-        database.table("integration_connections").select("id")
-        .eq("org_id", str(org_id)).eq("provider", "xero")
-        .eq("is_active", True).limit(1).execute().data
-    )
-    if xero_connection:
-        raise NotImplementedError(
-            "A Xero connection exists for this organization, but Xero sync is not implemented yet — "
-            "only the AccountingProvider interface shape is in place. Reconnect QuickBooks, or implement "
-            "app/services/ap/provider/xero_provider.py."
+    if not connections:
+        raise NoActiveAccountingProviderError(f"No active accounting provider is connected for org {org_id}.")
+    if len(connections) != 1:
+        raise AmbiguousAccountingProviderError(
+            f"Expected one active accounting connection for org {org_id}; found {len(connections)}."
         )
 
-    raise NoActiveAccountingProviderError(f"No active accounting provider is connected for org {org_id}.")
+    connection = connections[0]
+    provider = connection.get("provider")
+    if provider == IntegrationProvider.QUICKBOOKS.value:
+        return QuickBooksAccountingProvider(
+            org_id=org_id, db=database, connection_id=connection["id"]
+        )
+    raise NotImplementedError(
+        f"Chart of Accounts import for {provider} is not implemented in this ticket."
+    )
