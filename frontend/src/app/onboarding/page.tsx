@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, Loader2, Sparkles } from "lucide-react";
 import { onboardingApi, type OnboardingData } from "@/api/workspaces";
+import { countUniqueInviteSeats } from "@/lib/invitePreview";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
 import { useAppStore } from "@/store/useAppStore";
 import type { CompanySize } from "@/types/workspace";
@@ -33,6 +34,7 @@ export default function WorkspacePage() {
   const queryClient = useQueryClient();
   const { data: workspaces, isLoading: workspacesLoading, isError } = useWorkspaces();
   const setActiveWorkspace = useAppStore((state) => state.setActiveWorkspace);
+  const ownerEmail = useAppStore((state) => state.user?.email ?? "");
   const [data, setData] = useState<OnboardingData>(DEFAULT_DATA);
   const [step, setStep] = useState(1);
   const [loaded, setLoaded] = useState(false);
@@ -168,7 +170,7 @@ export default function WorkspacePage() {
       {step === 5 && <div className={styles.fields}>
         <label>Invite teammates <span className={styles.optional}>Optional</span><textarea rows={3} value={inviteText} onChange={(e) => { setInviteText(e.target.value); update("invite_emails", e.target.value.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean).slice(0, 10)); }} placeholder="Add email addresses separated by commas" /></label>
         <label>Who should approve invoices? <span className={styles.optional}>Optional</span><input type="email" value={data.approver_email} onChange={(e) => update("approver_email", e.target.value)} placeholder="approver@company.com" /></label>
-        <div className={styles.note}>Preview only: {1 + new Set([...data.invite_emails, ...(data.approver_email ? [data.approver_email] : [])]).size} seats would be used, including you. No invitations are sent during setup; you can invite people later.</div>
+        <div className={styles.note}>Preview only: {countUniqueInviteSeats(ownerEmail, data.invite_emails, data.approver_email)} seats would be used, including you. No invitations are sent during setup; you can invite people later.</div>
       </div>}
 
       {step === 6 && <div className={styles.summary}>

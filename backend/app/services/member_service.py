@@ -9,6 +9,7 @@ from fastapi import HTTPException, status
 from app.context.auth import AuthUser
 from app.core.enum.database import OrgRole
 from app.core.permissions import get_permissions
+from app.core.plan import get_plan
 
 from app.repositories.audit.audit_repository import AuditRepository
 from app.repositories.organization.member_repository import MemberRepository
@@ -97,15 +98,39 @@ class MemberService:
             expires_at=expires,
         )
 
-    async def resend_invitation(
-        self,
-        membership_id: UUID,
-        email: str,
+    async def create_invitation(
+        self, *, org_id: UUID, seat_limit: int | None, role: OrgRole,
+        department: str | None, spending_limit, invited_by: UUID, email: str,
     ):
-        return await self.invite_member(
-            membership_id,
-            email,
-        )
+        token = secrets.token_urlsafe(48)
+        expires = datetime.now(UTC) + timedelta(days=7)
+        try:
+            return await self.members.create_invitation_with_capacity(
+                org_id=org_id, seat_limit=seat_limit, role=role,
+                department=department, spending_limit=spending_limit,
+                invited_by=invited_by, invite_email=email,
+                invite_token=token, expires_at=expires,
+            )
+        except Exception as exc:
+            message = str(exc)
+            if "SEAT_LIMIT_REACHED" in message:
+                raise HTTPException(status_code=409, detail="SEAT_LIMIT_REACHED") from exc
+            if "INVITATION_ALREADY_EXISTS" in message:
+                raise HTTPException(status_code=409, detail="An invitation is already pending for this email.") from exc
+            raise
+
+    async def resend_invitation(self, membership_id: UUID, seat_limit: int | None):
+        token = secrets.token_urlsafe(48)
+        expires = datetime.now(UTC) + timedelta(days=7)
+        try:
+            return await self.members.resend_invitation_with_capacity(
+                membership_id=membership_id, seat_limit=seat_limit,
+                invite_token=token, expires_at=expires,
+            )
+        except Exception as exc:
+            if "SEAT_LIMIT_REACHED" in str(exc):
+                raise HTTPException(status_code=409, detail="SEAT_LIMIT_REACHED") from exc
+            raise
 
     async def cancel_invitation(
         self,
@@ -115,10 +140,7 @@ class MemberService:
             membership_id,
         )
 
-    async def accept_invitation(
-        self,
-        token: str,
-    ):
+    async def accept_invitation(self, token: str, user_id: UUID):
         invitation = await self.members.get_by_invite_token(
             token,
         )
@@ -129,18 +151,29 @@ class MemberService:
                 detail="Invitation not found.",
             )
 
-        if (
-            invitation.invite_expires_at
-            and invitation.invite_expires_at < datetime.now(UTC)
-        ):
+        if invitation.invite_expires_at and invitation.invite_expires_at < datetime.now(UTC):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invitation expired.",
             )
-
-        return await self.members.mark_invitation_accepted(
-            invitation.id,
-        )
+        organization = await self.organizations.get_organization(invitation.org_id)
+        if organization is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation workspace not found.")
+        plan = get_plan(organization.plan)
+        limit = None if plan.unlimited_seats else plan.seats
+        try:
+            return await self.members.accept_invitation_with_capacity(
+                token=token, user_id=user_id, seat_limit=limit,
+            )
+        except Exception as exc:
+            message = str(exc)
+            if "SEAT_LIMIT_REACHED" in message:
+                raise HTTPException(status_code=409, detail="SEAT_LIMIT_REACHED") from exc
+            if "INVITATION_EXPIRED" in message:
+                raise HTTPException(status_code=400, detail="Invitation expired.") from exc
+            if "INVITATION_NOT_FOUND" in message:
+                raise HTTPException(status_code=404, detail="Invitation not found.") from exc
+            raise
 
         # =====================================================
     # Member Management

@@ -5,18 +5,15 @@ Members Router
 Flow 11 — POST /members/invite, POST /members/accept-invite,
 GET /members.
 
-MemberService already existed fully built but had no HTTP
-entrypoint. Its invite_member(membership_id, email) expects an
-existing pending membership row, so the invite flow here is:
-create_membership() (role/department/spending_limit, inactive)
--> invite_member() (generates + stores the token) — matching
-Flow 11's two-part "org_members table INSERT" + "invite_token"
-description in one request.
+The member service and repository own membership operations. Invitation
+creation and seat reservation run in one database RPC so concurrent invites
+cannot overbook a workspace.
 ============================================================
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,9 +24,10 @@ from app.core.auth import get_current_user
 from app.core.enum.database import OrgRole
 from app.core.ocm import get_org_context
 from app.core.permissions import INVITE_MEMBERS, REMOVE_MEMBERS, VIEW_MEMBERS, MANAGE_AP_RULES, MANAGE_ROLES, MANAGE_APPROVAL_AUTHORITY
-from app.services.member_service import MemberService
 from app.core.container import get_container
 from app.core.mfa import require_fresh_mfa
+from app.core.plan import get_plan
+from app.services.member_seats import seats_available
 
 router = APIRouter(prefix="/members", tags=["Members"])
 
@@ -58,7 +56,18 @@ async def list_members(
     if VIEW_MEMBERS not in ctx.permissions:
         raise HTTPException(status_code=403, detail="Not authorized")
     members = await get_container().member_service.list_members(ctx.org_id)
-    return [m.model_dump(mode="json") for m in members]
+    now = datetime.now(UTC)
+    return [
+        {
+            **m.model_dump(mode="json", exclude={"invite_token"}),
+            "invitation_status": (
+                "active" if m.is_active else
+                "pending" if m.invite_token and (m.invite_expires_at is None or m.invite_expires_at > now) else
+                "expired" if m.invite_token else "cancelled"
+            ),
+        }
+        for m in members
+    ]
 
 
 @router.post("/invite", status_code=201, dependencies=[Depends(require_fresh_mfa)])
@@ -69,35 +78,35 @@ async def invite_member(
 ):
     if INVITE_MEMBERS not in ctx.permissions:
         raise HTTPException(status_code=403, detail="Not authorized")
+    if payload.role == OrgRole.OWNER and ctx.role != OrgRole.OWNER:
+        raise HTTPException(status_code=403, detail="Only a workspace owner can invite another owner.")
+    if payload.role not in {OrgRole.OWNER, OrgRole.ADMIN, OrgRole.AP_MEMBER, OrgRole.APPROVER}:
+        raise HTTPException(status_code=422, detail="Choose Workspace Admin, Invoice Reviewer, or Approver.")
 
     service = get_container().member_service
 
-    membership = await service.members.create_membership(
-        {
-            "org_id": ctx.org_id,
-            "role": payload.role.value,
-            "department": payload.department,
-            "spending_limit": payload.spending_limit,
-            "invited_by": user.id,
-            "is_active": False,
-        }
-    )
-    # NOTE: Flow 11 specifies checking member_repository.get_by_invite_email
-    # for a 409 duplicate-invite conflict before creating the row, but
-    # no such repository method exists in this codebase (only
-    # get_by_invite_token, which needs a token that doesn't exist
-    # yet at this point). Skipped rather than calling a method that
-    # isn't there — add get_by_invite_email to MemberRepository if
-    # you want that guard back.
+    members = await service.list_members(ctx.org_id)
+    active_users = {str(member.user_id) for member in members if member.is_active and member.user_id}
+    pending_invites = {str(member.id) for member in members if not member.is_active and member.invite_token and (member.invite_expires_at is None or member.invite_expires_at > datetime.now(UTC))}
+    plan = get_plan(ctx.plan)
+    limit = None if plan.unlimited_seats else plan.seats
+    if not seats_available(active_count=len(active_users), pending_count=len(pending_invites), limit=limit):
+        raise HTTPException(status_code=409, detail="SEAT_LIMIT_REACHED")
 
-    invitation = await service.invite_member(membership.id, payload.email)
+    invitation = await service.create_invitation(
+        org_id=ctx.org_id, seat_limit=limit, role=payload.role,
+        department=payload.department, spending_limit=payload.spending_limit,
+        invited_by=user.id, email=payload.email,
+    )
+    if invitation is None:
+        raise HTTPException(status_code=500, detail="Could not create invitation.")
 
     if payload.spending_limit is not None:
         try:
             organization = await get_container().organization_service.organizations.get_organization(ctx.org_id)
             currency = (organization.currency if organization else "USD").upper()
             await get_container().approval_authority_service.authorities.upsert(
-                ctx.org_id, membership.id, {
+                ctx.org_id, invitation.id, {
                     "approval_type": "invoice", "currency": currency,
                     "limit_amount": str(payload.spending_limit),
                     "can_self_approve": False, "can_approve_exceptions": True,
@@ -107,12 +116,12 @@ async def invite_member(
             pass
 
     return {
-        "membership_id": str(membership.id),
+        "membership_id": str(invitation.id),
         "invite_email": payload.email,
         "status": "invited",
         "invite_expires_at": (
             invitation.invite_expires_at.isoformat()
-            if getattr(invitation, "invite_expires_at", None)
+            if invitation.invite_expires_at
             else None
         ),
     }
@@ -131,14 +140,49 @@ async def accept_invite(
     this (404/400 raised internally) — this just exposes it.
     """
     service = get_container().member_service
-    membership = await service.accept_invitation(payload.token)
-
-    await service.members.update_membership(
-        membership.id,
-        {"user_id": user.id},
-    )
+    membership = await service.accept_invitation(payload.token, user.id)
+    if membership is None:
+        raise HTTPException(status_code=409, detail="SEAT_LIMIT_REACHED")
 
     return {"membership_id": str(membership.id), "status": "active"}
+
+
+@router.post("/{membership_id}/resend", dependencies=[Depends(require_fresh_mfa)])
+async def resend_invitation(
+    membership_id: UUID,
+    ctx: OrganizationContext = Depends(get_org_context),
+):
+    if INVITE_MEMBERS not in ctx.permissions:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    service = get_container().member_service
+    member = await service.ensure_member_exists(membership_id)
+    if member.org_id != ctx.org_id:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.is_active or not member.invite_email:
+        raise HTTPException(status_code=409, detail="There is no pending invitation to resend.")
+    plan = get_plan(ctx.plan)
+    limit = None if plan.unlimited_seats else plan.seats
+    invitation = await service.resend_invitation(membership_id, limit)
+    if invitation is None:
+        raise HTTPException(status_code=409, detail="There is no pending invitation to resend.")
+    return {"membership_id": str(membership_id), "status": "invited", "invite_expires_at": invitation.invite_expires_at.isoformat() if invitation and invitation.invite_expires_at else None}
+
+
+@router.post("/{membership_id}/cancel-invitation", dependencies=[Depends(require_fresh_mfa)])
+async def cancel_invitation(
+    membership_id: UUID,
+    ctx: OrganizationContext = Depends(get_org_context),
+):
+    if INVITE_MEMBERS not in ctx.permissions:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    service = get_container().member_service
+    member = await service.ensure_member_exists(membership_id)
+    if member.org_id != ctx.org_id:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if member.is_active or not member.invite_token:
+        raise HTTPException(status_code=409, detail="There is no pending invitation to cancel.")
+    await service.cancel_invitation(membership_id)
+    return {"membership_id": str(membership_id), "status": "cancelled"}
 
 
 
@@ -212,7 +256,11 @@ async def remove_member(
     if REMOVE_MEMBERS not in ctx.permissions:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    await get_container().member_service.remove_member(user, membership_id)
+    service = get_container().member_service
+    member = await service.ensure_member_exists(membership_id)
+    if member.org_id != ctx.org_id:
+        raise HTTPException(status_code=404, detail="Member not found")
+    await service.remove_member(user, membership_id)
     return {"status": "removed"}
 
 
