@@ -64,6 +64,13 @@ export interface APReferenceUploadResponse {
   status: string;
 }
 
+export interface APEmailAddress {
+  id?: string;
+  email_address?: string;
+  is_active?: boolean;
+  configured?: boolean;
+}
+
 export interface InvoiceCoding {
   id: string;
   document_id: string;
@@ -121,8 +128,9 @@ export const apApi = {
     return (await client.post<APReferenceUploadResponse>("/ap/reference-documents/upload", form, { headers: { "Content-Type": "multipart/form-data" } })).data;
   },
   convertReferenceDocument: async (sourceDocumentId: string, purchaseOrderId?: string) => (await client.post(`/ap/reference-documents/${sourceDocumentId}/convert`, purchaseOrderId ? { purchase_order_id: purchaseOrderId } : {})).data,
-  getEmailAddress: async () => (await client.get("/ap/email-address")).data,
-  createEmailAddress: async () => (await client.post("/ap/email-address")).data,
+  getEmailAddress: async () => (await client.get<APEmailAddress>("/ap/email-address")).data,
+  createEmailAddress: async () => (await client.post<APEmailAddress>("/ap/email-address")).data,
+  rotateEmailAddress: async () => (await client.post<APEmailAddress>("/ap/email-address/rotate")).data,
 };
 
 /**

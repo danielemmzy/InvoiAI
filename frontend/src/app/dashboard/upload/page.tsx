@@ -5,6 +5,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   useDropzone,
@@ -40,6 +41,8 @@ import { useAppStore } from "@/store/useAppStore";
 
 import DuplicateUploadDialog from "@/components/documents/DuplicateUploadDialog";
 import { describeUploadRejection } from "@/lib/uploadErrors";
+import { apApi } from "@/api/ap";
+import { getErrorMessage } from "@/api/client";
 
 export default function UploadPage() {
   const [
@@ -63,6 +66,24 @@ export default function UploadPage() {
     useAppStore(
       (state) => state.user
     );
+
+  const workspaceId = useAppStore((state) => state.activeWorkspace?.id);
+  const workspaceRole = useAppStore((state) => state.activeWorkspace?.role);
+  const canManageEmailAddress = workspaceRole === "owner" || workspaceRole === "admin";
+  const queryClient = useQueryClient();
+  const [confirmEmailRotation, setConfirmEmailRotation] = useState(false);
+  const emailAddressQuery = useQuery({
+    queryKey: ["ap-email-address", workspaceId],
+    queryFn: apApi.getEmailAddress,
+    enabled: Boolean(workspaceId),
+  });
+  const emailAddressMutation = useMutation({
+    mutationFn: (rotate: boolean) => rotate ? apApi.rotateEmailAddress() : apApi.createEmailAddress(),
+    onSuccess: async () => {
+      setConfirmEmailRotation(false);
+      await queryClient.invalidateQueries({ queryKey: ["ap-email-address", workspaceId] });
+    },
+  });
 
   const uploadProgress =
     useAppStore(
@@ -291,6 +312,75 @@ export default function UploadPage() {
             "current"}{" "}
           plan.
         </div>
+
+        <section className="card" aria-labelledby="ap-email-intake-title" style={{ padding: 18, marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+            <div style={{ minWidth: 0 }}>
+              <h2 id="ap-email-intake-title" className="card-title">Supplier email intake</h2>
+              <p className="dash-subtitle" style={{ margin: "6px 0 12px" }}>
+                Forward supplier invoices to this address to add them to your AP review queue.
+              </p>
+              {emailAddressQuery.isPending ? (
+                <p role="status" className="dash-subtitle">Loading your forwarding address…</p>
+              ) : emailAddressQuery.isError ? (
+                <p role="alert" style={{ color: "#a33232", margin: 0 }}>
+                  {getErrorMessage(emailAddressQuery.error, "Could not load your forwarding address.")}
+                </p>
+              ) : emailAddressQuery.data?.email_address ? (
+                <code style={{ display: "inline-block", maxWidth: "100%", overflowWrap: "anywhere", fontSize: 15 }}>
+                  {emailAddressQuery.data.email_address}
+                </code>
+              ) : (
+                <p className="dash-subtitle" style={{ margin: 0 }}>Set up an address to start receiving invoices by email.</p>
+              )}
+              {emailAddressMutation.isError && (
+                <p role="alert" style={{ color: "#a33232", margin: "10px 0 0" }}>
+                  {getErrorMessage(emailAddressMutation.error, "Could not update the forwarding address.")}
+                </p>
+              )}
+              {emailAddressMutation.isSuccess && (
+                <p role="status" style={{ margin: "10px 0 0" }}>Forwarding address updated.</p>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+              {canManageEmailAddress && !emailAddressQuery.isPending && !emailAddressQuery.isError && !emailAddressQuery.data?.email_address && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={emailAddressMutation.isPending}
+                  onClick={() => emailAddressMutation.mutate(false)}
+                >
+                  {emailAddressMutation.isPending ? "Setting up…" : "Set up address"}
+                </button>
+              )}
+              {canManageEmailAddress && emailAddressQuery.data?.email_address && !confirmEmailRotation && (
+                <button type="button" className="btn-secondary" onClick={() => setConfirmEmailRotation(true)}>
+                  Rotate address
+                </button>
+              )}
+              {canManageEmailAddress && confirmEmailRotation && (
+                <div style={{ maxWidth: 300 }}>
+                  <p role="alert" style={{ margin: "0 0 8px", fontSize: 13 }}>
+                    Rotation disables the current address immediately. Update suppliers after rotating.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="btn-danger"
+                      disabled={emailAddressMutation.isPending}
+                      onClick={() => emailAddressMutation.mutate(true)}
+                    >
+                      {emailAddressMutation.isPending ? "Rotating…" : "Confirm rotation"}
+                    </button>
+                    <button type="button" className="btn-ghost" onClick={() => setConfirmEmailRotation(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
 
         <div
           className="dash-grid"

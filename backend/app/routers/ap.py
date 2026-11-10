@@ -12,7 +12,7 @@ from app.context import OrganizationContext
 from app.core.ocm import get_org_context
 from app.core.permissions import VIEW_FINANCE, MANAGE_FINANCE
 from app.core.config import settings
-from app.core.enum.database import DocumentStatus, DocumentType
+from app.core.enum.database import DocumentStatus, DocumentType, OrgRole
 from app.core.auth import require_verified_user
 from app.core.authorization import require_permission
 from app.core.limiter import limiter
@@ -24,6 +24,7 @@ from app.services.ap.approval_bridge import APApprovalBridge
 from app.services.ap.chart_of_accounts_service import ChartOfAccountsService
 from app.services.ap.chart_of_accounts_seed import seed_starter_chart_of_accounts
 from app.services.ap.recovery_service import APRecoveryService, is_stale
+from app.services.ap.email_address_service import manage_email_address
 from app.services.audit_service import AuditService
 from app.core.enum.database import IntegrationProvider
 from app.repositories.integration.integration_repository import (
@@ -894,44 +895,24 @@ async def create_email_address(
     ctx: OrganizationContext = Depends(get_org_context),
     _: None = Depends(require_permission(MANAGE_FINANCE)),
 ):
-    org = (
-        db()
-        .table("organizations")
-        .select("slug")
-        .eq("id", str(ctx.org_id))
-        .single()
-        .execute()
-        .data
+    if ctx.role not in {OrgRole.OWNER, OrgRole.ADMIN}:
+        raise HTTPException(status_code=403, detail="Only workspace administrators can manage the forwarding address.")
+    return manage_email_address(
+        db(), org_id=ctx.org_id, user_id=ctx.user_id,
+        domain=settings.ap_email_inbound_domain,
     )
-    local = f"invoices+{org['slug']}".lower().replace(" ", "-")
-    domain = __import__(
-        "app.core.config", fromlist=["settings"]
-    ).settings.ap_email_inbound_domain
-    address = f"{local}@{domain}"
-    existing = (
-        db()
-        .table("ap_email_intake_addresses")
-        .select("*")
-        .eq("org_id", str(ctx.org_id))
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
-        .data
-    )
-    if existing:
-        return existing[0]
-    return (
-        db()
-        .table("ap_email_intake_addresses")
-        .insert(
-            {
-                "org_id": str(ctx.org_id),
-                "email_address": address,
-                "created_by": str(ctx.user_id),
-            }
-        )
-        .execute()
-        .data[0]
+
+
+@router.post("/email-address/rotate")
+async def rotate_email_address(
+    ctx: OrganizationContext = Depends(get_org_context),
+    _: None = Depends(require_permission(MANAGE_FINANCE)),
+):
+    if ctx.role not in {OrgRole.OWNER, OrgRole.ADMIN}:
+        raise HTTPException(status_code=403, detail="Only workspace administrators can rotate the forwarding address.")
+    return manage_email_address(
+        db(), org_id=ctx.org_id, user_id=ctx.user_id,
+        domain=settings.ap_email_inbound_domain, rotate=True,
     )
 
 
