@@ -20,4 +20,5 @@
 --   20261109_resumable_business_onboarding.sql
 --   20261110_admin_mfa_recovery.sql
 --   20261110_vendor_supplier_lifecycle.sql
+--   20261111_atomic_member_seat_capacity.sql
 -- Keep this manifest synchronized whenever a migration is added.
