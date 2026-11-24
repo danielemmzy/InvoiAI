@@ -50,6 +50,8 @@ from app.services.payment.payment_state_machine import validate_transition
 _DEFAULT_PROVIDER = MockPaymentProvider()
 
 
+from app.core.db import execute
+
 class PaymentInstructionService:
 
 
@@ -101,8 +103,8 @@ class PaymentInstructionService:
             return existing
 
         doc = (
-            self.db.table("documents").select("total_amount,currency,vendor_id,ap_status")
-            .eq("org_id", str(org_id)).eq("id", str(document_id)).limit(1).execute().data
+            (await execute(self.db.table("documents").select("total_amount,currency,vendor_id,ap_status")
+            .eq("org_id", str(org_id)).eq("id", str(document_id)).limit(1))).data
         )
         if not doc:
             raise ValueError(f"Document {document_id} was not found.")
@@ -256,9 +258,9 @@ class PaymentInstructionService:
         event = await self.provider.handle_webhook(payload=payload, headers=headers)
 
         rows = (
-            self.db.table("payment_instructions").select("id,document_id,status")
+            (await execute(self.db.table("payment_instructions").select("id,document_id,status")
             .eq("org_id", str(org_id)).eq("provider_payment_id", event.provider_payment_id)
-            .limit(1).execute().data
+            .limit(1))).data
         )
         if not rows:
             raise ValueError(f"No payment instruction found for provider payment {event.provider_payment_id}.")
@@ -298,9 +300,9 @@ class PaymentInstructionService:
                 failure_reason=event.failure_reason,
             )
             if target_status == PaymentInstructionStatus.RETURNED:
-                document = self.db.table("documents").select("ap_status").eq(
+                document = (await execute(self.db.table("documents").select("ap_status").eq(
                     "org_id", str(org_id)
-                ).eq("id", str(document_id)).limit(1).execute().data or []
+                ).eq("id", str(document_id)).limit(1))).data or []
                 if document and document[0].get("ap_status") in {InvoiceAPStatus.PAID.value, InvoiceAPStatus.RECONCILED.value}:
                     await self.state_machine.transition(
                         document_id, org_id, InvoiceAPStatus.PAYMENT_READY,
@@ -362,9 +364,9 @@ class PaymentInstructionService:
                 to_status=PaymentInstructionStatus.RETURNED, reason="provider reports returned/reversed payment",
                 failure_reason=(result.raw or {}).get("failure_reason"),
             )
-            document = self.db.table("documents").select("ap_status").eq(
+            document = (await execute(self.db.table("documents").select("ap_status").eq(
                 "org_id", str(org_id)
-            ).eq("id", str(instruction.document_id)).limit(1).execute().data or []
+            ).eq("id", str(instruction.document_id)).limit(1))).data or []
             if document and document[0].get("ap_status") in {InvoiceAPStatus.PAID.value, InvoiceAPStatus.RECONCILED.value}:
                 await self.state_machine.transition(
                     instruction.document_id, org_id, InvoiceAPStatus.PAYMENT_READY,

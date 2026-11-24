@@ -20,6 +20,8 @@ from googleapiclient.discovery import build
 from app.services.google.credentials import GoogleCredentials
 
 
+from app.core.db import execute
+
 class DriveService:
     """
     Google Drive API wrapper.
@@ -44,7 +46,7 @@ class DriveService:
         Share a Drive file with a user.
         """
 
-        self.client.permissions().create(
+        await execute(self.client.permissions().create(
             fileId=file_id,
             body={
                 "type": "user",
@@ -52,4 +54,4 @@ class DriveService:
                 "emailAddress": email,
             },
             sendNotificationEmail=False,
-        ).execute()
+        ))

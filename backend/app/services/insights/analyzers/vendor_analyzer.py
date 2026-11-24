@@ -36,14 +36,17 @@ class VendorAnalyzer:
 
         increases: list[dict] = []
 
+        # One query for every vendor's latest document instead of one per vendor.
+        latest_by_vendor = await self.documents.latest_documents_by_vendor(
+            org_id, [vendor.id for vendor in top_vendors], per_vendor=1
+        )
+
         for vendor in top_vendors:
             avg = float(vendor.average_spend or 0)
             if avg <= 0:
                 continue
 
-            recent_docs = await self.documents.list_vendor_documents(
-                org_id, vendor.id, limit=1, offset=0
-            )
+            recent_docs = latest_by_vendor.get(str(vendor.id), [])
             if not recent_docs:
                 continue
 

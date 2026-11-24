@@ -24,6 +24,7 @@ from app.models.domain.subscription import (
     Subscription,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class SubscriptionRepository(BaseRepository):
@@ -91,12 +92,11 @@ class SubscriptionRepository(BaseRepository):
         org_id: UUID,
     ) -> Subscription | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -106,7 +106,7 @@ class SubscriptionRepository(BaseRepository):
         stripe_subscription_id: str,
     ) -> Subscription | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -114,7 +114,6 @@ class SubscriptionRepository(BaseRepository):
                 stripe_subscription_id,
             )
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -128,12 +127,11 @@ class SubscriptionRepository(BaseRepository):
         status: SubscriptionStatus,
     ) -> list[Subscription]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("status", status.value)
             .order("created_at", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -143,12 +141,11 @@ class SubscriptionRepository(BaseRepository):
         plan: PlanType,
     ) -> list[Subscription]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("plan", plan.value)
             .order("created_at", desc=True)
-            .execute()
         )
 
         return self._many(response)

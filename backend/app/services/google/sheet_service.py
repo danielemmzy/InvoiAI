@@ -26,6 +26,8 @@ from app.models.domain.document import (
 from app.services.google.credentials import GoogleCredentials
 
 
+from app.core.db import execute
+
 class SheetsService:
     """
     Google Sheets API wrapper.
@@ -56,7 +58,7 @@ class SheetsService:
         (spreadsheet_id, spreadsheet_url)
         """
 
-        spreadsheet = (
+        spreadsheet = await execute(
             self.client.spreadsheets()
             .create(
                 body={
@@ -65,7 +67,6 @@ class SheetsService:
                     }
                 }
             )
-            .execute()
         )
 
         spreadsheet_id = spreadsheet["spreadsheetId"]
@@ -100,7 +101,7 @@ class SheetsService:
             ["Total", str(document.total_amount or "")],
         ]
 
-        (
+        await execute(
             self.client.spreadsheets()
             .values()
             .update(
@@ -109,7 +110,6 @@ class SheetsService:
                 valueInputOption="RAW",
                 body={"values": values},
             )
-            .execute()
         )
 
     # ======================================================
@@ -133,13 +133,12 @@ class SheetsService:
             }
         ]
 
-        (
+        await execute(
             self.client.spreadsheets()
             .batchUpdate(
                 spreadsheetId=spreadsheet_id,
                 body={"requests": requests},
             )
-            .execute()
         )
 
         values = [
@@ -170,7 +169,7 @@ class SheetsService:
                 ]
             )
 
-        (
+        await execute(
             self.client.spreadsheets()
             .values()
             .update(
@@ -179,5 +178,4 @@ class SheetsService:
                 valueInputOption="RAW",
                 body={"values": values},
             )
-            .execute()
         )

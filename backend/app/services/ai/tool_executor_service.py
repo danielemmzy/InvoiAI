@@ -41,6 +41,8 @@ from app.services.search_service import SearchService
 from app.services.insights.analyzers.vendor_analyzer import VendorAnalyzer
 
 
+from app.core.db import execute
+
 class ToolExecutor:
 
     def __init__(
@@ -153,14 +155,14 @@ class ToolExecutor:
 
     async def get_document_workflow(self, *, org_id: UUID|None, document_id: str):
         if org_id is None:return {"error":"org_id is required"}
-        return self.documents.table().select("id,document_type,workflow_route,classification_confidence,classification_reason,status,pipeline_stage,ap_status,match_status,gl_coding_status").eq("id",document_id).eq("org_id",str(org_id)).single().execute().data or {"error":"document not found"}
+        return (await execute(self.documents.table().select("id,document_type,workflow_route,classification_confidence,classification_reason,status,pipeline_stage,ap_status,match_status,gl_coding_status").eq("id",document_id).eq("org_id",str(org_id)).single())).data or {"error":"document not found"}
 
     async def get_finance_snapshot(self, *, user_id: UUID|None):
         if user_id is None:return {"error":"user_id is required"}
         from app.core.supabase import get_supabase
         db=get_supabase(); ot=OwnerType.PERSONAL.value; oid=str(user_id)
-        accounts=db.table("financial_accounts").select("name,current_balance,currency,last_synced_at").eq("owner_type",ot).eq("owner_id",oid).eq("is_active",True).execute().data or []
-        latest=db.table("statement_imports").select("created_at,statement_end,transactions_imported").eq("owner_type",ot).eq("owner_id",oid).order("created_at",desc=True).limit(1).execute().data or []
+        accounts=(await execute(db.table("financial_accounts").select("name,current_balance,currency,last_synced_at").eq("owner_type",ot).eq("owner_id",oid).eq("is_active",True))).data or []
+        latest=(await execute(db.table("statement_imports").select("created_at,statement_end,transactions_imported").eq("owner_type",ot).eq("owner_id",oid).order("created_at",desc=True).limit(1))).data or []
         return {"accounts":accounts,"latest_statement":latest[0] if latest else None,"mode":"personal"}
 
     # =========================================================

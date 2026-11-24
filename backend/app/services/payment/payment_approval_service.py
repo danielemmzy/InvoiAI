@@ -45,6 +45,8 @@ from app.services.payment.payment_authorization_service import PaymentAuthorizat
 from app.services.payment.payment_instruction_service import PaymentInstructionService
 
 
+from app.core.db import execute
+
 class PaymentApprovalService:
 
     def __init__(
@@ -87,10 +89,10 @@ class PaymentApprovalService:
             return instruction
 
         existing_workflow = (
-            self.db.table("approval_workflows").select("id")
+            (await execute(self.db.table("approval_workflows").select("id")
             .eq("org_id", str(org_id)).eq("document_id", str(document_id)).eq("workflow_type", "payment")
             .eq("status", ApprovalStatus.IN_REVIEW.value)
-            .limit(1).execute().data
+            .limit(1))).data
         )
 
         if existing_workflow:
@@ -114,8 +116,8 @@ class PaymentApprovalService:
     async def _start_payment_workflow(self, *, org_id: UUID, document_id: UUID, instruction_id: UUID, requested_by: UUID | None) -> UUID | None:
 
         doc = (
-            self.db.table("documents").select("total_amount,document_type,vendor_name,vendor_id,external_source_data,capture_overrides")
-            .eq("org_id", str(org_id)).eq("id", str(document_id)).single().execute().data
+            (await execute(self.db.table("documents").select("total_amount,document_type,vendor_name,vendor_id,external_source_data,capture_overrides")
+            .eq("org_id", str(org_id)).eq("id", str(document_id)).single())).data
         )
         amount = Decimal(str(doc.get("total_amount") or 0))
         vendor_id = UUID(doc["vendor_id"]) if doc.get("vendor_id") else None
@@ -231,13 +233,13 @@ class PaymentApprovalService:
 
     async def on_workflow_decided(self, *, org_id: UUID, workflow_id: UUID, actor_id: UUID) -> str:
 
-        workflow = self.db.table("approval_workflows").select("status,document_id").eq("id", str(workflow_id)).single().execute().data
+        workflow = (await execute(self.db.table("approval_workflows").select("status,document_id").eq("id", str(workflow_id)).single())).data
         if not workflow:
             return "unknown"
 
         rows = (
-            self.db.table("payment_instructions").select("id")
-            .eq("org_id", str(org_id)).eq("approval_workflow_id", str(workflow_id)).limit(1).execute().data
+            (await execute(self.db.table("payment_instructions").select("id")
+            .eq("org_id", str(org_id)).eq("approval_workflow_id", str(workflow_id)).limit(1))).data
         )
         if not rows:
             return "no_instruction"

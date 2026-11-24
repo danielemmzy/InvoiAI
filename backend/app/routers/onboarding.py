@@ -18,7 +18,7 @@ router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
 @router.get("/draft", response_model=OnboardingDraftResponse)
 @limiter.limit("60/minute")
 async def get_draft(request: Request, response: Response, user: AuthUser = Depends(get_current_user)):
-    row = OnboardingDraftRepository().get(user.id)
+    row = await OnboardingDraftRepository().get(user.id)
     if row is None:
         return OnboardingDraftResponse()
     return OnboardingDraftResponse(**row)
@@ -27,7 +27,7 @@ async def get_draft(request: Request, response: Response, user: AuthUser = Depen
 @router.put("/draft", response_model=OnboardingDraftResponse)
 @limiter.limit("60/minute")
 async def save_draft(request: Request, response: Response, body: OnboardingDraftUpdate, user: AuthUser = Depends(get_current_user)):
-    row = OnboardingDraftRepository().save(user.id, step=body.step, data=body.data)
+    row = await OnboardingDraftRepository().save(user.id, step=body.step, data=body.data)
     return OnboardingDraftResponse(**row)
 
 

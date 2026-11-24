@@ -224,6 +224,8 @@ DEFAULT_POLICY: dict[str, Any] = {
 }
 
 
+from app.core.db import execute
+
 class OrganizationProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=200)
     industry: str | None = None
@@ -330,7 +332,7 @@ async def update_organization_settings(
             raise HTTPException(status_code=404, detail="Organization settings not found")
 
     try:
-        await service.organizations.db.table("organization_settings").select("id").eq("org_id", str(ctx.org_id)).limit(1).execute()
+        await (await execute(service.organizations.db.table("organization_settings").select("id").eq("org_id", str(ctx.org_id)).limit(1)))
         await get_container().audit_service.log(
             org_id=ctx.org_id,
             user_id=UUID(ctx.user_id),

@@ -13,6 +13,10 @@ from app.services.insights.analyzers.payable_analyzer import PayableAnalyzer
 class EmptyDocuments:
     async def list_by_status(self, *args, **kwargs):
         return []
+    async def list_by_statuses(self, *args, **kwargs):
+        return []
+    async def latest_documents_by_vendor(self, *args, **kwargs):
+        return {}
     async def list_overdue(self, *args, **kwargs):
         return []
     async def list_vendor_documents(self, *args, **kwargs):

@@ -21,6 +21,7 @@ Repositories own persistence.
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 import re
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ import logging
 
 from app.context.organization import OrganizationContext
 from app.context.auth import AuthUser
+from app.core.db import execute
 
 from app.models.domain.organization import Organization
 
@@ -77,7 +79,7 @@ class OrganizationService:
         self.onboarding_drafts = OnboardingDraftRepository()
 
     async def complete_onboarding(self, *, user: AuthUser, data: OnboardingComplete) -> WorkspaceSummary:
-        draft = self.onboarding_drafts.get(user.id)
+        draft = await self.onboarding_drafts.get(user.id)
         if draft and draft.get("completed") and draft.get("workspace_id"):
             existing = await self.organizations.get_organization(UUID(str(draft["workspace_id"])))
             if existing and str(existing.created_by) == str(user.id):
@@ -92,11 +94,11 @@ class OrganizationService:
         if draft and draft.get("completed"):
             raise HTTPException(status_code=409, detail="The completed workspace is no longer available.")
 
-        self.onboarding_drafts.save(user.id, step=6, data=data.model_dump())
+        await self.onboarding_drafts.save(user.id, step=6, data=data.model_dump())
         # The row-level RPC reserves one stable workspace ID for concurrent
         # retries. The following organization bootstrap still uses separate
         # Supabase calls with compensation; it is not a DB transaction.
-        workspace_id = self.onboarding_drafts.claim_workspace_id(user.id)
+        workspace_id = await self.onboarding_drafts.claim_workspace_id(user.id)
         workspace = await self.create_workspace(
             user=user, workspace_type="business", name=data.name,
             currency=data.currency.upper(), country=data.country.upper(),
@@ -105,7 +107,7 @@ class OrganizationService:
             monthly_invoice_volume=data.monthly_invoice_volume,
             accounting_software=data.accounting_software,
         )
-        self.onboarding_drafts.mark_completed(user.id, workspace_id)
+        await self.onboarding_drafts.mark_completed(user.id, workspace_id)
         return workspace
 
     # ======================================================
@@ -222,30 +224,32 @@ class OrganizationService:
 
             org_uuid = membership.org_id
 
+            # --------------------------------------------------
+            # Load organization resources
+            # --------------------------------------------------
+            organization, settings, usage = await asyncio.gather(
+                self._get_organization(org_uuid),
+                self._get_settings(org_uuid),
+                self._get_usage(org_uuid),
+            )
+
         else:
 
             org_uuid = UUID(org_id)
 
-            membership = await self._get_member(
-                org_id=org_uuid,
-                user_id=user.id,
+            # The requested organization is known from the header, and the
+            # membership, organization, settings and usage rows are independent
+            # reads. Resolving them concurrently keeps context building to one
+            # round-trip worth of latency instead of four.
+            membership, organization, settings, usage = await asyncio.gather(
+                self._get_member(
+                    org_id=org_uuid,
+                    user_id=user.id,
+                ),
+                self._get_organization(org_uuid),
+                self._get_settings(org_uuid),
+                self._get_usage(org_uuid),
             )
-
-        # --------------------------------------------------
-        # Load organization resources
-        # --------------------------------------------------
-
-        organization = await self._get_organization(
-            org_uuid,
-        )
-
-        settings = await self._get_settings(
-            org_uuid,
-        )
-
-        usage = await self._get_usage(
-            org_uuid,
-        )
 
         # --------------------------------------------------
         # Usage
@@ -284,6 +288,7 @@ class OrganizationService:
         effective_permissions = await self.get_permissions(
             org_id=organization.id,
             user_id=user.id,
+            membership=membership,
         )
 
         return OrganizationContext(
@@ -358,11 +363,15 @@ class OrganizationService:
         memberships = await self.members.list_user_memberships(user_id)
         if not memberships:
             return []
+        # One query for every workspace instead of one per membership.
+        organizations = await self.organizations.get_organizations_by_ids(
+            [membership.org_id for membership in memberships if membership.is_active]
+        )
         result: list[WorkspaceSummary] = []
         for membership in memberships:
             if not membership.is_active:
                 continue
-            org = await self.organizations.get_organization(membership.org_id)
+            org = organizations.get(str(membership.org_id))
             if org is None:
                 continue
             workspace_type = "personal" if bool((org.features or {}).get("personal_mode")) else "business"
@@ -611,23 +620,27 @@ class OrganizationService:
 
         except Exception:
             # Compensation keeps the multi-step bootstrap from
-            # leaving an orphaned workspace.
-            try:
-                memberships = (
-                    await self.members.list_organization_members(
+            # leaving an orphaned workspace. It must only remove what this
+            # call created: a repeated completion reserves the same id, so
+            # the organization can already exist here, and deleting it would
+            # destroy a workspace this request did not create.
+            if not organization_was_existing:
+                try:
+                    memberships = (
+                        await self.members.list_organization_members(
+                            org_id
+                        )
+                    )
+
+                    for membership in memberships:
+                        await self.members.delete_membership(
+                            membership.id
+                        )
+
+                finally:
+                    await self.organizations.delete_organization(
                         org_id
                     )
-                )
-
-                for membership in memberships:
-                    await self.members.delete_membership(
-                        membership.id
-                    )
-
-            finally:
-                await self.organizations.delete_organization(
-                    org_id
-                )
 
             raise HTTPException(
                 status_code=500,
@@ -660,9 +673,16 @@ class OrganizationService:
         *,
         org_id: UUID,
         user_id: UUID,
+        membership=None,
     ) -> set[str]:
+        """Return the effective permission set for a member.
 
-        member = await self._get_member(
+        ``membership`` lets callers that already resolved the member row (the
+        organization-context build) pass it in, so the same row is not fetched
+        twice in one request.
+        """
+
+        member = membership or await self._get_member(
             org_id=org_id,
             user_id=user_id,
         )
@@ -672,14 +692,14 @@ class OrganizationService:
         # migration has not been installed yet, fall back to legacy RBAC.
         try:
             row = (
-                self.organizations.db.table("organization_roles")
-                .select("permissions")
-                .eq("org_id", str(org_id))
-                .eq("id", str(member.access_role_id))
-                .limit(1)
-                .execute()
-                .data
-            ) if member.access_role_id else []
+                await execute(
+                    self.organizations.db.table("organization_roles")
+                    .select("permissions")
+                    .eq("org_id", str(org_id))
+                    .eq("id", str(member.access_role_id))
+                    .limit(1)
+                )
+            ).data if member.access_role_id else []
             if row:
                 permissions.update(str(p) for p in (row[0].get("permissions") or []) if p != "*")
                 if "*" in (row[0].get("permissions") or []):

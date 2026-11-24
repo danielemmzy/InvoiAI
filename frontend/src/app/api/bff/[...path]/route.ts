@@ -446,6 +446,7 @@ async function handleLoginOrSignup(
   request: Request,
   path: string,
 ): Promise<NextResponse> {
+  const startedAt = performance.now();
   const upstream =
     await backendRequest(
       request,
@@ -464,6 +465,12 @@ async function handleLoginOrSignup(
       "application/json",
     )
   ) {
+    if (path === AUTH_LOGIN_PATH) {
+      console.info("bff_login_timing", {
+        durationMs: Math.round(performance.now() - startedAt),
+        status: upstream.status,
+      });
+    }
     return forwardUpstream(
       upstream,
     );
@@ -476,6 +483,12 @@ async function handleLoginOrSignup(
     >;
 
   if (!upstream.ok) {
+    if (path === AUTH_LOGIN_PATH) {
+      console.info("bff_login_timing", {
+        durationMs: Math.round(performance.now() - startedAt),
+        status: upstream.status,
+      });
+    }
     const response =
       NextResponse.json(
         data,
@@ -525,6 +538,13 @@ async function handleLoginOrSignup(
   }
 
   clearLegacyCookies(response);
+
+  if (path === AUTH_LOGIN_PATH) {
+    console.info("bff_login_timing", {
+      durationMs: Math.round(performance.now() - startedAt),
+      status: upstream.status,
+    });
+  }
 
   return response;
 }

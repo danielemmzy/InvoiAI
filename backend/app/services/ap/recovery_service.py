@@ -44,6 +44,8 @@ _STATE_TTL_SECONDS = 7 * 24 * 60 * 60
 _SWEEP_LOCK = "invoiai:ap:recovery-sweep"
 
 
+from app.core.db import execute
+
 def recovery_step(status: str | None) -> str | None:
     """Return the worker that can advance this AP status, if any."""
     if status in {InvoiceAPStatus.VALIDATING.value, InvoiceAPStatus.MATCHING.value}:
@@ -133,7 +135,7 @@ class APRecoveryService:
         except Exception:
             logger.warning("Could not clear AP recovery state for %s", document_id, exc_info=True)
 
-    def list_stale(
+    async def list_stale(
         self,
         *,
         lease_seconds: int,
@@ -142,18 +144,17 @@ class APRecoveryService:
     ) -> list[dict]:
         stale_before = (now or datetime.now(UTC)) - timedelta(seconds=lease_seconds)
         return (
-            self.db.table("documents")
-            .select("id,org_id,ap_status,updated_at")
-            .eq("ap_enabled", True)
-            .eq("document_type", "invoice")
-            .in_("ap_status", list(RECOVERABLE_STATUSES))
-            .lt("updated_at", stale_before.isoformat())
-            .order("updated_at")
-            .limit(limit)
-            .execute()
-            .data
-            or []
-        )
+            await execute(
+                self.db.table("documents")
+                .select("id,org_id,ap_status,updated_at")
+                .eq("ap_enabled", True)
+                .eq("document_type", "invoice")
+                .in_("ap_status", list(RECOVERABLE_STATUSES))
+                .lt("updated_at", stale_before.isoformat())
+                .order("updated_at")
+                .limit(limit)
+            )
+        ).data or []
 
     async def recover_one(
         self,
@@ -199,11 +200,10 @@ class APRecoveryService:
             )
 
         updated = (
-            self.db.table("documents")
+            (await execute(self.db.table("documents")
             .select("ap_status,updated_at")
             .eq("id", str(document_id))
-            .limit(1)
-            .execute()
+            .limit(1)))
             .data
             or []
         )
@@ -254,7 +254,7 @@ class APRecoveryService:
                 f"AP automation could not recover this invoice after {attempts} attempts. "
                 "The failure is recorded below; correct the cause and retry the workflow."
             )
-            self.db.table("documents").update(
+            (await execute(self.db.table("documents").update(
                 {
                     "status": "needs_review",
                     "processing_step": processing_step,
@@ -264,7 +264,7 @@ class APRecoveryService:
                     "match_status": None if is_coding_failure else "exception",
                     "error_message": str(exc)[:500],
                 }
-            ).eq("id", str(document_id)).eq("org_id", str(org_id)).execute()
+            ).eq("id", str(document_id)).eq("org_id", str(org_id))))
 
             try:
                 await self.state.transition(
@@ -333,7 +333,7 @@ class APRecoveryService:
             logger.warning("AP recovery sweep lock unavailable; continuing without it", exc_info=True)
 
         try:
-            rows = self.list_stale(lease_seconds=lease_seconds, limit=limit)
+            rows = await self.list_stale(lease_seconds=lease_seconds, limit=limit)
             outcomes = {"recovered": 0, "failed": 0, "dead_lettered": 0, "deferred": 0, "no_change": 0, "dead": 0, "skipped": 0}
             for row in rows:
                 outcome = await self.recover_one(row, max_attempts=max_attempts)

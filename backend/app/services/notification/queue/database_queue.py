@@ -8,6 +8,8 @@ from uuid import UUID
 from app.services.notification.queue.base import NotificationQueue
 
 
+from app.core.db import execute
+
 class DatabaseNotificationQueue(NotificationQueue):
     """
     PostgreSQL-backed notification queue.
@@ -60,7 +62,7 @@ class DatabaseNotificationQueue(NotificationQueue):
         payload: dict[str, Any],
     ) -> bool:
         """Persist the queue payload and make the delivery claimable."""
-        response = (
+        response = await execute(
             self.db.table("notification_deliveries")
             .update(
                 {
@@ -71,7 +73,6 @@ class DatabaseNotificationQueue(NotificationQueue):
                 }
             )
             .eq("id", str(delivery_id))
-            .execute()
         )
         return bool(response.data)
 
@@ -85,10 +86,12 @@ class DatabaseNotificationQueue(NotificationQueue):
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Atomically claim queued/retrying deliveries using the DB function."""
-        response = self.db.rpc(
-            "claim_notification_deliveries",
-            {"p_limit": limit},
-        ).execute()
+        response = await execute(
+            self.db.rpc(
+                "claim_notification_deliveries",
+                {"p_limit": limit},
+            )
+        )
         return response.data or []
 
     # =========================================================
@@ -104,7 +107,7 @@ class DatabaseNotificationQueue(NotificationQueue):
         Mark a processing delivery as sent.
         """
 
-        response = (
+        response = await execute(
             self.db.table(
                 "notification_deliveries",
             )
@@ -124,7 +127,6 @@ class DatabaseNotificationQueue(NotificationQueue):
                 "status",
                 "processing",
             )
-            .execute()
         )
 
         return bool(response.data)
@@ -153,7 +155,7 @@ class DatabaseNotificationQueue(NotificationQueue):
             ).isoformat(),
         }
 
-        response = (
+        response = await execute(
             self.db.table(
                 "notification_deliveries",
             )
@@ -166,7 +168,6 @@ class DatabaseNotificationQueue(NotificationQueue):
                 "status",
                 "processing",
             )
-            .execute()
         )
 
         return bool(response.data)
@@ -177,11 +178,13 @@ class DatabaseNotificationQueue(NotificationQueue):
         timeout_seconds: int = 300,
         limit: int = 100,
     ) -> int:
-        response = self.db.rpc(
-            "recover_stale_notification_deliveries",
-            {
-                "p_timeout_seconds": timeout_seconds,
-                "p_limit": limit,
-            },
-        ).execute()
+        response = await execute(
+            self.db.rpc(
+                "recover_stale_notification_deliveries",
+                {
+                    "p_timeout_seconds": timeout_seconds,
+                    "p_limit": limit,
+                },
+            )
+        )
         return int(response.data or 0)

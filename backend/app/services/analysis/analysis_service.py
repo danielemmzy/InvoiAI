@@ -42,6 +42,8 @@ from app.workers.embedding_worker import (
 logger = logging.getLogger(__name__)
 
 
+from app.core.db import execute
+
 class AnalysisService:
     """
     AI Analysis orchestration service.
@@ -253,7 +255,7 @@ class AnalysisService:
                 from app.services.finance.expense_service import ExpenseService
                 await ExpenseService().create(owner_type=OwnerType.ORGANIZATION, owner_id=document.org_id, amount=document.total_amount, description=document.vendor_name or document.file_name, expense_date=document.document_date, document_id=document.id)
             from app.core.supabase import get_supabase
-            get_supabase().table("documents").update({"workflow_route":"business_expense"}).eq("id",str(document.id)).execute()
+            await execute(get_supabase().table("documents").update({"workflow_route":"business_expense"}).eq("id",str(document.id)))
 
         task = asyncio.create_task(
             self.embedding_worker.execute(document_id=document.id),

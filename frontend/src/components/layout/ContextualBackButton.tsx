@@ -116,6 +116,10 @@ export default function ContextualBackButton() {
     router.push(destination.href);
   }
 
+  // The overview is the home destination; a back button there only points at Documents.
+  const currentPath = pathname.split("?")[0].replace(/\/$/, "") || "/dashboard";
+  if (currentPath === "/dashboard") return null;
+
   return (
     <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
       <button

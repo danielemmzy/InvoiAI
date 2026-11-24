@@ -204,7 +204,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
 
-        {/* Shared contextual back navigation is available on every dashboard page. */}
+        {/* Shared contextual back navigation is available on every dashboard page except the overview. */}
         <div className="dash-body">
           <Suspense fallback={null}><ContextualBackButton /></Suspense>
           {children}

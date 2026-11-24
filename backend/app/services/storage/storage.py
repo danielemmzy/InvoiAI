@@ -4,6 +4,7 @@ from pathlib import Path
 
 from supabase import Client
 
+from app.core.db import run_db
 from app.core.supabase import get_supabase
 from app.core.error_handler import PlatformError
 
@@ -57,9 +58,11 @@ class StorageService:
         """
 
         try:
-            return self.client.storage.from_(
+            bucket = self.client.storage.from_(
                 self.DOCUMENT_BUCKET,
-            ).download(path)
+            )
+            # The Storage SDK is synchronous; download off the event loop.
+            return await run_db(bucket.download, path)
         except Exception as exc:
             raise PlatformError(
                 "Document storage is temporarily unavailable.",
@@ -108,7 +111,9 @@ class StorageService:
         )
 
         try:
-            bucket.upload(
+            # The Storage SDK is synchronous; upload off the event loop.
+            await run_db(
+                bucket.upload,
                 path,
                 content,
                 {
@@ -197,9 +202,12 @@ class StorageService:
             return
 
         try:
-            self.client.storage.from_(
+            bucket = self.client.storage.from_(
                 self.DOCUMENT_BUCKET,
-            ).remove(
+            )
+            # The Storage SDK is synchronous; delete off the event loop.
+            await run_db(
+                bucket.remove,
                 [path],
             )
         except Exception as exc:
@@ -234,9 +242,12 @@ class StorageService:
             )
 
         try:
-            response = self.client.storage.from_(
+            bucket = self.client.storage.from_(
                 self.DOCUMENT_BUCKET,
-            ).create_signed_url(
+            )
+            # The Storage SDK is synchronous; signing off the event loop.
+            response = await run_db(
+                bucket.create_signed_url,
                 path,
                 expires_in,
             )
@@ -273,9 +284,11 @@ class StorageService:
         filename = Path(path).name
 
         try:
-            files = self.client.storage.from_(
+            bucket = self.client.storage.from_(
                 self.DOCUMENT_BUCKET,
-            ).list(folder)
+            )
+            # The Storage SDK is synchronous; listing off the event loop.
+            files = await run_db(bucket.list, folder)
         except Exception as exc:
             raise PlatformError(
                 "Document storage is temporarily unavailable.",

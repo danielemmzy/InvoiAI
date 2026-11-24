@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -21,6 +23,7 @@ from app.schemas.auth import (
     MFARecoveryRequest,
 )
 from app.core.auth import get_current_user, AuthUser, validate_access_token
+from app.core.db import run_db
 from app.core.mfa import require_recent_supabase_mfa
 from app.core.container import get_container
 from app.core.limiter import limiter
@@ -104,7 +107,7 @@ def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie("refresh_token", path="/")
 
 
-def _response(r) -> AuthResponse:
+async def _response(r) -> AuthResponse:
     """
     Convert Supabase Auth response into our API response schema.
 
@@ -120,24 +123,63 @@ def _response(r) -> AuthResponse:
 
     from app.services.auth.verification_service import resolve_email_verified
 
+    verification_started = time.perf_counter()
+    is_verified = await run_db(
+        resolve_email_verified,
+        r.user.id,
+        supabase_verified=r.user.email_confirmed_at is not None,
+    )
+    logger.info(
+        "login_stage_timing stage=email_verification duration_ms=%d",
+        round((time.perf_counter() - verification_started) * 1000),
+    )
+
     return AuthResponse(
         access_token=r.session.access_token,
         refresh_token=r.session.refresh_token,
         user_id=str(r.user.id),
         email=r.user.email,
         plan="free",
-        is_verified=resolve_email_verified(
-            r.user.id,
-            supabase_verified=r.user.email_confirmed_at is not None,
-        ),
+        is_verified=is_verified,
     )
 
 
-def _mfa_login_state(user_id: str, access_token: str) -> tuple[bool, bool]:
-    if not mfa_service.has_admin_membership(user_id):
+async def _mfa_login_state(
+    user_id: str,
+    access_token: str,
+    *,
+    factors=None,
+) -> tuple[bool, bool]:
+    # GoTrue and Postgres are both blocking clients; keep them off the loop.
+    membership_started = time.perf_counter()
+    is_admin = await run_db(mfa_service.has_admin_membership, user_id)
+    logger.info(
+        "login_stage_timing stage=mfa_membership duration_ms=%d",
+        round((time.perf_counter() - membership_started) * 1000),
+    )
+    if not is_admin:
         return False, False
-    factors = mfa_service.factors_for_user(access_token)
-    if not factors.totp:
+
+    if factors is None:
+        # The password grant response carries the user's factors, so the
+        # normal path needs no second auth-service call. Older GoTrue
+        # responses may omit the field; fall back to listing them rather than
+        # assuming MFA is absent.
+        factors_started = time.perf_counter()
+        listed = await run_db(mfa_service.factors_for_user, access_token)
+        logger.info(
+            "login_stage_timing stage=mfa_factor_retrieval duration_ms=%d source=auth_api",
+            round((time.perf_counter() - factors_started) * 1000),
+        )
+        factors = listed.all
+    else:
+        # The password grant already supplied factor state, so no additional
+        # Auth API request was needed on this path.
+        logger.info(
+            "login_stage_timing stage=mfa_factor_retrieval duration_ms=0 source=password_grant",
+        )
+
+    if not mfa_service.has_verified_totp_factor(factors):
         return True, False
     return False, True
 
@@ -151,10 +193,12 @@ def _request_access_token(request: Request) -> str:
     return token
 
 
-def _require_recovery_or_recent_mfa(user: AuthUser) -> None:
+async def _require_recovery_or_recent_mfa(user: AuthUser) -> None:
     if is_recent_aal2(user.aal, user.mfa_verified_at):
         return
-    if mfa_service.has_recovery_step_up(user.id, user.session_id):
+    if await run_db(
+        mfa_service.has_recovery_step_up, user.id, user.session_id
+    ):
         return
     raise HTTPException(
         status_code=403,
@@ -246,6 +290,8 @@ async def login(
     response: Response,
     body: LoginRequest,
 ):
+    started = time.perf_counter()
+
     try:
         result = await get_container().auth_service.login(
             body.email,
@@ -273,13 +319,30 @@ async def login(
             detail="Invalid email or password",
         ) from exc
 
-    auth_response = _response(result)
+    password_auth_ms = (time.perf_counter() - started) * 1000
+
+    if not result.user or not result.session:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication failed",
+        )
+
+    # Email-verification state and the admin/MFA gate are independent reads,
+    # so they run concurrently. Both still execute and enforce their own
+    # result; neither is cached.
+    auth_task = asyncio.create_task(_response(result))
+    checks_started = time.perf_counter()
     try:
         (
-            auth_response.mfa_enrollment_required,
-            auth_response.mfa_challenge_required,
-        ) = _mfa_login_state(auth_response.user_id, auth_response.access_token)
+            mfa_enrollment_required,
+            mfa_challenge_required,
+        ) = await _mfa_login_state(
+            str(result.user.id),
+            result.session.access_token,
+            factors=result.user.factors,
+        )
     except Exception as exc:
+        auth_task.cancel()
         platform_exc = platform_error(exc)
         if platform_exc is not None:
             raise platform_exc from exc
@@ -288,7 +351,20 @@ async def login(
             status_code=503,
             detail={"code": "MFA_STATUS_UNAVAILABLE", "message": "We could not verify your authenticator setup."},
         ) from exc
+
+    auth_response = await auth_task
+    auth_response.mfa_enrollment_required = mfa_enrollment_required
+    auth_response.mfa_challenge_required = mfa_challenge_required
+
     _set_auth_cookies(response, auth_response.access_token, auth_response.refresh_token)
+
+    logger.info(
+        "login_timing password_auth_ms=%d concurrent_checks_ms=%d total_ms=%d",
+        round(password_auth_ms),
+        round((time.perf_counter() - checks_started) * 1000),
+        round((time.perf_counter() - started) * 1000),
+    )
+
     return auth_response
 
 
@@ -345,13 +421,15 @@ async def google_oauth_exchange(request: Request, body: dict):
         if not isinstance(access_token, str) or not isinstance(refresh_token, str):
             raise HTTPException(status_code=401, detail="Google sign-in could not be completed.")
 
-        user = validate_access_token(access_token)
+        # validate_access_token performs a blocking GoTrue call and a database
+        # read; keep both off the event loop.
+        user = await run_db(validate_access_token, access_token)
         if not user.is_verified:
             raise HTTPException(
                 status_code=403,
                 detail="Verify your Google email before signing in.",
             )
-        mfa_enrollment_required, mfa_challenge_required = _mfa_login_state(
+        mfa_enrollment_required, mfa_challenge_required = await _mfa_login_state(
             str(user.id), access_token
         )
         return AuthResponse(
@@ -426,7 +504,7 @@ async def refresh(
             detail="Session expired. Please log in again.",
         )
 
-    auth_response = _response(result)
+    auth_response = await _response(result)
     _set_auth_cookies(response, auth_response.access_token, auth_response.refresh_token)
     return auth_response
 
@@ -643,7 +721,7 @@ async def list_mfa_factors(
     user: AuthUser = Depends(get_current_user),
 ):
     response.headers["Cache-Control"] = "no-store"
-    factors = mfa_service.factors_for_user(_request_access_token(request))
+    factors = await run_db(mfa_service.factors_for_user, _request_access_token(request))
     return {
         "factors": [
             {
@@ -670,21 +748,23 @@ async def enroll_mfa_factor(
 ):
     response.headers["Cache-Control"] = "no-store"
     token = _request_access_token(request)
-    auth_client = get_user_supabase(token)
-    current = auth_client.auth.mfa.list_factors()
+    # Building the user client calls the synchronous auth SDK (set_session).
+    auth_client = await run_db(get_user_supabase, token)
+    current = await run_db(auth_client.auth.mfa.list_factors)
     if current.totp:
-        _require_recovery_or_recent_mfa(user)
+        await _require_recovery_or_recent_mfa(user)
     if any(factor.status == "unverified" for factor in current.all):
         raise HTTPException(
             status_code=409,
             detail="Remove the pending authenticator setup before starting another.",
         )
-    enrollment = auth_client.auth.mfa.enroll(
+    enrollment = await run_db(
+        auth_client.auth.mfa.enroll,
         {
             "factor_type": "totp",
             "issuer": "InvoiAI",
             "friendly_name": body.friendly_name,
-        }
+        },
     )
     return {
         "factor_id": enrollment.id,
@@ -704,8 +784,9 @@ async def challenge_mfa_factor(
     user: AuthUser = Depends(get_current_user),
 ):
     response.headers["Cache-Control"] = "no-store"
-    challenge = get_user_supabase(_request_access_token(request)).auth.mfa.challenge(
-        {"factor_id": body.factor_id}
+    auth_client = await run_db(get_user_supabase, _request_access_token(request))
+    challenge = await run_db(
+        auth_client.auth.mfa.challenge, {"factor_id": body.factor_id}
     )
     return {"challenge_id": challenge.id, "expires_at": challenge.expires_at}
 
@@ -720,23 +801,24 @@ async def verify_mfa_factor(
 ):
     response.headers["Cache-Control"] = "no-store"
     token = _request_access_token(request)
-    auth_client = get_user_supabase(token)
-    factors = auth_client.auth.mfa.list_factors()
+    auth_client = await run_db(get_user_supabase, token)
+    factors = await run_db(auth_client.auth.mfa.list_factors)
     factor = next((item for item in factors.all if item.id == body.factor_id), None)
     if factor is None:
         raise HTTPException(status_code=404, detail="Authenticator not found.")
 
-    verified = auth_client.auth.mfa.verify(
+    verified = await run_db(
+        auth_client.auth.mfa.verify,
         {
             "factor_id": body.factor_id,
             "challenge_id": body.challenge_id,
             "code": body.code,
-        }
+        },
     )
     recovery_codes: list[str] | None = None
     if factor.status == "unverified":
         recovery_codes, hashes = generate_recovery_codes()
-        mfa_service.replace_recovery_codes(user.id, hashes)
+        await run_db(mfa_service.replace_recovery_codes, user.id, hashes)
     return {
         "access_token": verified.access_token,
         "refresh_token": verified.refresh_token,
@@ -756,7 +838,9 @@ async def use_mfa_recovery_code(
     response.headers["Cache-Control"] = "no-store"
     if not user.session_id:
         raise HTTPException(status_code=401, detail="Session could not be verified.")
-    if not mfa_service.consume_recovery_code(user.id, user.session_id, body.code):
+    if not await run_db(
+        mfa_service.consume_recovery_code, user.id, user.session_id, body.code
+    ):
         raise HTTPException(
             status_code=400,
             detail={"code": "MFA_INVALID_RECOVERY_CODE", "message": "That recovery code is invalid or has already been used."},
@@ -772,9 +856,9 @@ async def regenerate_mfa_recovery_codes(
     user: AuthUser = Depends(get_current_user),
 ):
     response.headers["Cache-Control"] = "no-store"
-    _require_recovery_or_recent_mfa(user)
+    await _require_recovery_or_recent_mfa(user)
     codes, hashes = generate_recovery_codes()
-    mfa_service.replace_recovery_codes(user.id, hashes)
+    await run_db(mfa_service.replace_recovery_codes, user.id, hashes)
     return {"recovery_codes": codes}
 
 
@@ -787,19 +871,19 @@ async def remove_mfa_factor(
     user: AuthUser = Depends(get_current_user),
 ):
     response.headers["Cache-Control"] = "no-store"
-    auth_client = get_user_supabase(_request_access_token(request))
-    factors = auth_client.auth.mfa.list_factors()
+    auth_client = await run_db(get_user_supabase, _request_access_token(request))
+    factors = await run_db(auth_client.auth.mfa.list_factors)
     factor = next((item for item in factors.all if item.id == factor_id), None)
     if factor is None:
         raise HTTPException(status_code=404, detail="Authenticator not found.")
     if factor.status == "verified":
         require_recent_supabase_mfa(user)
-        if mfa_service.has_admin_membership(user.id) and len(factors.totp) <= 1:
+        if await run_db(mfa_service.has_admin_membership, user.id) and len(factors.totp) <= 1:
             raise HTTPException(
                 status_code=409,
                 detail="Workspace administrators must keep at least one verified authenticator.",
             )
-    removed = auth_client.auth.mfa.unenroll({"factor_id": factor_id})
+    removed = await run_db(auth_client.auth.mfa.unenroll, {"factor_id": factor_id})
     return {"removed_factor_id": removed.id}
 
 

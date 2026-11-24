@@ -17,6 +17,7 @@ from app.core.enum.database import IntegrationProvider
 from app.mappers.integration_mapper import IntegrationWebhookMapper
 from app.models.domain.integration import IntegrationWebhook
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class WebhookRepository(BaseRepository):
@@ -70,13 +71,12 @@ class WebhookRepository(BaseRepository):
         event_id: str,
     ) -> IntegrationWebhook | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("provider", provider.value)
             .eq("event_id", event_id)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -87,7 +87,7 @@ class WebhookRepository(BaseRepository):
         limit: int = 100,
     ) -> list[IntegrationWebhook]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -96,7 +96,6 @@ class WebhookRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -106,13 +105,12 @@ class WebhookRepository(BaseRepository):
         provider: IntegrationProvider,
     ) -> list[IntegrationWebhook]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("provider", provider.value)
             .eq("processed", False)
             .order("received_at")
-            .execute()
         )
 
         return self._many(response)
@@ -163,13 +161,12 @@ class WebhookRepository(BaseRepository):
         event_id: str,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("provider", provider.value)
             .eq("event_id", event_id)
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)

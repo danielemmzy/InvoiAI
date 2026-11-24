@@ -5,6 +5,7 @@ from uuid import UUID
 from app.mappers.audit_mapper import AuditLogMapper
 from app.models.domain.audit import AuditLog
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class AuditRepository(BaseRepository):
@@ -40,13 +41,12 @@ class AuditRepository(BaseRepository):
         offset: int = 0,
     ) -> list[AuditLog]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
 
         return self._many(response)
@@ -58,13 +58,12 @@ class AuditRepository(BaseRepository):
         offset: int = 0,
     ) -> list[AuditLog]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("user_id", str(user_id))
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
 
         return self._many(response)
@@ -75,13 +74,12 @@ class AuditRepository(BaseRepository):
         resource_id: UUID,
     ) -> list[AuditLog]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("resource_type", resource_type)
             .eq("resource_id", str(resource_id))
             .order("created_at", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -91,12 +89,11 @@ class AuditRepository(BaseRepository):
         request_id: str,
     ) -> list[AuditLog]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("request_id", request_id)
             .order("created_at")
-            .execute()
         )
 
         return self._many(response)

@@ -29,15 +29,16 @@ class PayableAnalyzer:
         today = datetime.now(UTC).date()
         horizon = today + timedelta(days=horizon_days)
 
-        candidates = []
-        for status in (
-            DocumentStatus.APPROVED,
-            DocumentStatus.NEEDS_REVIEW,
-            DocumentStatus.IN_APPROVAL,
-        ):
-            candidates.extend(
-                await self.documents.list_by_status(org_id, status, limit=200)
-            )
+        # One query for the three statuses instead of three list queries.
+        candidates = await self.documents.list_by_statuses(
+            org_id,
+            [
+                DocumentStatus.APPROVED,
+                DocumentStatus.NEEDS_REVIEW,
+                DocumentStatus.IN_APPROVAL,
+            ],
+            limit=200,
+        )
 
         upcoming = [
             d for d in candidates

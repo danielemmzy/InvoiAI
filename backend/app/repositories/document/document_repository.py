@@ -13,6 +13,7 @@ from app.mappers.document_mapper import DocumentMapper
 from app.models.domain.document import Document
 from app.repositories.base import BaseRepository
 from app.repositories.mixins.external_sync import ExternalSyncMixin
+from app.core.db import execute
 
 
 logger = logging.getLogger(__name__)
@@ -110,13 +111,12 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         document_number: str,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("document_number", document_number)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -156,7 +156,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 str(exclude_document_id),
             )
 
-        response = query.limit(1).execute()
+        response = await execute(query.limit(1))
 
         return self._one(response)
 
@@ -177,7 +177,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
 
         if existing:
 
-            response = (
+            response = await execute(
                 self.table()
                 .update(
                     self.mapper.to_update(document)
@@ -186,7 +186,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                     }
                 )
                 .eq("id", str(existing.id))
-                .execute()
             )
 
             return self._one(response)
@@ -225,7 +224,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         document_id: UUID,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -233,7 +232,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -244,7 +242,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         document_id: UUID,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -254,7 +252,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -287,7 +284,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
             document_query = document_query.or_(
                 f"document_number.ilike.*{term}*,vendor_name.ilike.*{term}*"
             )
-        response = (
+        response = await execute(
             document_query.order(
                 "created_at",
                 desc=True,
@@ -296,10 +293,54 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
+
+    async def list_document_rows(
+        self,
+        org_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+        industry: str | None = None,
+        query: str | None = None,
+    ) -> tuple[list[dict], int]:
+        """Return one page of raw document rows plus the exact filtered total.
+
+        ``count="exact"`` makes PostgREST return the total for the same filter
+        in the same round trip, so the list endpoint no longer performs a
+        separate ``head=True`` count that repeated the identical scan.
+        Raw rows are returned because the list endpoint reads capture and
+        classification columns straight from them instead of re-querying.
+        """
+
+        if query and any(character in query for character in ",()"):
+            raise ValueError("Document search contains unsupported filter syntax.")
+
+        document_query = (
+            self.table()
+            .select("*", count="exact")
+            .eq("org_id", str(org_id))
+            .eq("is_archived", False)
+        )
+        if industry:
+            document_query = document_query.eq("industry", industry)
+        if query and (term := query.strip()):
+            document_query = document_query.or_(
+                f"document_number.ilike.*{term}*,vendor_name.ilike.*{term}*"
+            )
+
+        response = await execute(
+            document_query.order(
+                "created_at",
+                desc=True,
+            ).range(
+                offset,
+                offset + limit - 1,
+            )
+        )
+
+        return self.raw_many(response), int(response.count or 0)
 
     async def list_archived_documents(
         self,
@@ -308,7 +349,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         offset: int = 0,
     ) -> list[Document]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -321,7 +362,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -334,7 +374,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         offset: int = 0,
     ) -> list[Document]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -347,10 +387,81 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
+
+    async def list_by_statuses(
+        self,
+        org_id: UUID,
+        statuses: list[DocumentStatus],
+        limit: int = 200,
+    ) -> list[Document]:
+        """Fetch documents in any of several statuses in one query.
+
+        The insight analyzers looped over statuses and ran one list query each.
+        ``limit`` applies per status so the result set matches the old calls.
+        """
+
+        if not statuses:
+            return []
+
+        response = await execute(
+            self.table()
+            .select("*")
+            .eq("org_id", str(org_id))
+            .in_("status", [status.value for status in statuses])
+            .order(
+                "created_at",
+                desc=True,
+            )
+            .limit(limit * len(statuses))
+        )
+
+        rows: list[Document] = self._many(response)
+        per_status: dict[str, int] = {}
+        bounded: list[Document] = []
+        for document in rows:
+            key = document.status.value
+            if per_status.get(key, 0) >= limit:
+                continue
+            per_status[key] = per_status.get(key, 0) + 1
+            bounded.append(document)
+        return bounded
+
+    async def latest_documents_by_vendor(
+        self,
+        org_id: UUID,
+        vendor_ids: list[UUID],
+        per_vendor: int = 1,
+    ) -> dict[str, list[Document]]:
+        """Return each vendor's most recent documents in one query.
+
+        Vendor and subscription insights previously queried once per vendor.
+        Rows are ordered newest-first and bucketed in memory, bounded per vendor
+        to match the old ``limit`` semantics.
+        """
+
+        if not vendor_ids:
+            return {}
+
+        response = await execute(
+            self.table()
+            .select("*")
+            .eq("org_id", str(org_id))
+            .in_("vendor_id", [str(vendor_id) for vendor_id in vendor_ids])
+            .order("document_date", desc=True)
+            .order("created_at", desc=True)
+            .limit(min(2000, max(50, len(vendor_ids) * per_vendor * 10)))
+        )
+
+        grouped: dict[str, list[Document]] = {}
+        for document in self._many(response):
+            key = str(document.vendor_id)
+            bucket = grouped.setdefault(key, [])
+            if len(bucket) < per_vendor:
+                bucket.append(document)
+        return grouped
 
     async def list_by_status(
         self,
@@ -360,7 +471,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         offset: int = 0,
     ) -> list[Document]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -373,7 +484,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -386,7 +496,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         offset: int = 0,
     ) -> list[Document]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -399,7 +509,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -424,14 +533,13 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         """
         if not step.startswith("ap_"):
             current = (
-                self.table()
-                .select("ap_enabled,ap_status")
-                .eq("id", str(document_id))
-                .limit(1)
-                .execute()
-                .data
-                or []
-            )
+                await execute(
+                    self.table()
+                    .select("ap_enabled,ap_status")
+                    .eq("id", str(document_id))
+                    .limit(1)
+                )
+            ).data or []
             if current and not should_write_processing_state(
                 ap_enabled=current[0].get("ap_enabled"),
                 ap_status=current[0].get("ap_status"),
@@ -444,11 +552,13 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 )
                 return
 
-        self.db.table("documents").update({
-            "processing_step": step,
-            "processing_message": message,
-            "processing_progress": max(0, min(100, int(progress))),
-        }).eq("id", str(document_id)).execute()
+        await execute(
+            self.db.table("documents").update({
+                "processing_step": step,
+                "processing_message": message,
+                "processing_progress": max(0, min(100, int(progress))),
+            }).eq("id", str(document_id))
+        )
 
     async def update_pipeline_stage(
         self,
@@ -456,7 +566,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         stage: PipelineStage,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -464,7 +574,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -483,7 +592,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         recommendation -> status mapping.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -491,7 +600,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -507,7 +615,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         PipelineStage.COMPLETE (no trailing D) instead.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -516,7 +624,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -527,7 +634,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         error_message: str,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -537,7 +644,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -550,12 +656,12 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         Increment retry count using the database RPC.
         """
 
-        response = self.db.rpc(
+        response = await execute(self.db.rpc(
             "increment_document_retry",
             {
                 "p_document_id": str(document_id),
             },
-        ).execute()
+        ))
 
         return self._one(response)
 
@@ -570,7 +676,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         reason: str | None = None,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -581,7 +687,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -591,7 +696,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         document_id: UUID,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -602,7 +707,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -618,7 +722,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         exported_by: UUID,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -628,7 +732,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -642,14 +745,13 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
                 count="exact",
             )
             .eq("org_id", str(org_id))
-            .execute()
         )
 
         return response.count or 0
@@ -663,7 +765,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -674,7 +776,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 "status",
                 DocumentStatus.APPROVED.value,
             )
-            .execute()
         )
 
         return response.count or 0
@@ -684,7 +785,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -701,7 +802,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                     DocumentStatus.IN_APPROVAL.value,
                 ],
             )
-            .execute()
         )
 
         return response.count or 0
@@ -711,7 +811,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -722,7 +822,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 "status",
                 DocumentStatus.FAILED.value,
             )
-            .execute()
         )
 
         return response.count or 0
@@ -732,7 +831,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -743,7 +842,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 "status",
                 DocumentStatus.NEEDS_REVIEW.value,
             )
-            .execute()
         )
 
         return response.count or 0
@@ -753,7 +851,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -764,7 +862,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 "status",
                 DocumentStatus.APPROVED.value,
             )
-            .execute()
         )
 
         return response.count or 0
@@ -774,7 +871,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -785,7 +882,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 "status",
                 DocumentStatus.REJECTED.value,
             )
-            .execute()
         )
 
         return response.count or 0
@@ -795,12 +891,11 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> float:
 
-        response = (
+        response = await execute(
             self.table()
             .select("total_amount")
             .eq("org_id", str(org_id))
             .not_.is_("total_amount", "null")
-            .execute()
         )
 
         return float(
@@ -816,14 +911,13 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
                 count="exact",
             )
             .eq("org_id", str(org_id))
-            .execute()
         )
 
         return response.count or 0
@@ -842,13 +936,12 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
 
         start = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
-        response = (
+        response = await execute(
             self.table()
             .select("created_at")
             .eq("org_id", str(org_id))
             .gte("created_at", start)
             .order("created_at")
-            .execute()
         )
 
         buckets: dict[str, int] = {}
@@ -873,13 +966,12 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
 
         start = (datetime.now(UTC) - timedelta(days=months * 31)).isoformat()
 
-        response = (
+        response = await execute(
             self.table()
             .select("created_at")
             .eq("org_id", str(org_id))
             .gte("created_at", start)
             .order("created_at")
-            .execute()
         )
 
         buckets: dict[str, int] = {}
@@ -904,14 +996,13 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
 
         start = (datetime.now(UTC) - timedelta(days=months * 31)).isoformat()
 
-        response = (
+        response = await execute(
             self.table()
             .select("created_at,total_amount")
             .eq("org_id", str(org_id))
             .gte("created_at", start)
             .not_.is_("total_amount", "null")
             .order("created_at")
-            .execute()
         )
 
         buckets: dict[str, float] = {}
@@ -939,7 +1030,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> dict[str, int]:
 
-        response = self.table().select("risk_level").eq("org_id", str(org_id)).execute()
+        response = await execute(self.table().select("risk_level").eq("org_id", str(org_id)))
 
         distribution = {
             "low": 0,
@@ -962,7 +1053,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -970,7 +1061,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
             )
             .eq("org_id", str(org_id))
             .eq("is_duplicate", True)
-            .execute()
         )
 
         return response.count or 0
@@ -981,7 +1071,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         limit: int = 10,
     ) -> list[Document]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -997,7 +1087,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -1007,12 +1096,11 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> float:
 
-        response = (
+        response = await execute(
             self.table()
             .select("risk_score")
             .eq("org_id", str(org_id))
             .not_.is_("risk_score", "null")
-            .execute()
         )
 
         scores = [
@@ -1034,7 +1122,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -1042,7 +1130,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
             )
             .eq("org_id", str(org_id))
             .gt("fraud_flags", 0)
-            .execute()
         )
 
         return response.count or 0
@@ -1052,7 +1139,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> list[Document]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -1064,7 +1151,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 "created_at",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -1080,7 +1166,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         exported_by: UUID,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -1090,7 +1176,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -1106,7 +1191,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         reason: str | None = None,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -1117,7 +1202,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -1127,7 +1211,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         document_id: UUID,
     ) -> Document | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -1138,7 +1222,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(document_id))
-            .execute()
         )
 
         return self._one(response)
@@ -1152,12 +1235,12 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         document_id: UUID,
     ) -> Document | None:
 
-        response = self.db.rpc(
+        response = await execute(self.db.rpc(
             "increment_document_retry",
             {
                 "p_document_id": str(document_id),
             },
-        ).execute()
+        ))
 
         return self._one(response)
 
@@ -1172,9 +1255,11 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         items: list[dict],
     ) -> list[dict]:
         """Replace extracted line items for a fresh OCR/extraction run."""
-        self.db.table("document_line_items").delete().eq(
-            "document_id", str(document_id)
-        ).eq("org_id", str(org_id)).execute()
+        await execute(
+            self.db.table("document_line_items").delete().eq(
+                "document_id", str(document_id)
+            ).eq("org_id", str(org_id))
+        )
 
         if not items:
             return []
@@ -1197,7 +1282,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 "created_at": now,
             })
 
-        response = self.db.table("document_line_items").insert(rows).execute()
+        response = await execute(self.db.table("document_line_items").insert(rows))
         return response.data or []
 
     async def get_document_line_items(
@@ -1208,12 +1293,11 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         Retrieve all line items belonging to a document.
         """
 
-        response = (
+        response = await execute(
             self.db.table("document_line_items")
             .select("*")
             .eq("document_id", str(document_id))
             .order("position")
-            .execute()
         )
 
         return response.data or []
@@ -1223,37 +1307,37 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
             return []
         now = datetime.now(UTC).isoformat()
         rows = [{**item, "org_id": str(org_id), "document_id": str(document_id), "created_at": now} for item in items]
-        return self.raw_many(self.db.table("document_line_items").insert(rows).execute())
+        return self.raw_many(await execute(self.db.table("document_line_items").insert(rows)))
 
     async def list_document_line_items(self, *, org_id: UUID, document_id: UUID) -> list[dict]:
-        response = (
+        response = await execute(
             self.db.table("document_line_items").select("*")
-            .eq("org_id", str(org_id)).eq("document_id", str(document_id)).order("position").execute()
+            .eq("org_id", str(org_id)).eq("document_id", str(document_id)).order("position")
         )
         return self.raw_many(response)
 
     async def get_document_line_item(self, *, org_id: UUID, item_id: UUID) -> dict | None:
-        response = (
+        response = await execute(
             self.db.table("document_line_items").select("*")
-            .eq("org_id", str(org_id)).eq("id", str(item_id)).limit(1).execute()
+            .eq("org_id", str(org_id)).eq("id", str(item_id)).limit(1)
         )
         return self.raw(response) or None
 
     async def get_document_for_org(self, *, org_id: UUID, document_id: UUID) -> dict | None:
         response = (
-            self.table().select("id,org_id").eq("org_id", str(org_id)).eq("id", str(document_id)).limit(1).execute()
+            await execute(self.table().select("id,org_id").eq("org_id", str(org_id)).eq("id", str(document_id)).limit(1))
         )
         return self.raw(response) or None
 
     async def update_document_line_item(self, *, org_id: UUID, item_id: UUID, data: dict) -> dict:
-        response = (
+        response = await execute(
             self.db.table("document_line_items").update(data)
-            .eq("org_id", str(org_id)).eq("id", str(item_id)).execute()
+            .eq("org_id", str(org_id)).eq("id", str(item_id))
         )
         return self.raw(response)
 
     async def delete_document_line_item(self, *, org_id: UUID, item_id: UUID) -> bool:
-        self.db.table("document_line_items").delete().eq("org_id", str(org_id)).eq("id", str(item_id)).execute()
+        await execute(self.db.table("document_line_items").delete().eq("org_id", str(org_id)).eq("id", str(item_id)))
         return True
 
     async def get_vendor(
@@ -1264,12 +1348,11 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         Retrieve the vendor associated with a document.
         """
 
-        response = (
+        response = await execute(
             self.db.table("vendors")
             .select("*")
             .eq("id", str(vendor_id))
             .limit(1)
-            .execute()
         )
 
         if not response.data:
@@ -1333,7 +1416,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
 
         if document.vendor_id and document.total_amount and document.document_date:
 
-            response = (
+            response = await execute(
                 self.table()
                 .select("*")
                 .eq("org_id", str(org_id))
@@ -1342,7 +1425,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
                 .eq("document_date", document.document_date.isoformat())
                 .neq("id", str(document.id))
                 .limit(1)
-                .execute()
             )
 
             duplicate = self._one(response)
@@ -1367,7 +1449,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
 
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -1375,7 +1457,6 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
             .eq("total_amount", amount)
             .gte("document_date", cutoff)
             .order("document_date", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -1385,24 +1466,22 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
     # =========================================================
 
     async def list_pending_ocr(self, *, limit: int = 100) -> list[Document]:
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("status", DocumentStatus.PENDING.value)
             .order("created_at")
             .limit(limit)
-            .execute()
         )
         return self._many(response)
 
     async def list_pending_analysis(self, *, limit: int = 100) -> list[Document]:
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("status", DocumentStatus.OCR_COMPLETE.value)
             .order("updated_at")
             .limit(limit)
-            .execute()
         )
         return self._many(response)
 
@@ -1421,13 +1500,12 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         ),
     ) -> list[dict]:
         """Return the minimal document projection required by spending insights."""
-        response = (
+        response = await execute(
             self.table()
             .select("id, document_date")
             .eq("org_id", str(org_id))
             .in_("status", [status.value for status in statuses])
             .gte("document_date", start_date)
-            .execute()
         )
         return self.raw_many(response)
 
@@ -1439,11 +1517,10 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         """Return the minimal line-item projection required by insight analyzers."""
         if not document_ids:
             return []
-        response = (
+        response = await execute(
             self.db.table("document_line_items")
             .select("document_id, category, amount")
             .in_("document_id", [str(value) for value in document_ids])
-            .execute()
         )
         return self.raw_many(response)
 
@@ -1453,7 +1530,7 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
         limit: int = 100,
     ) -> list[Document]:
         """Return completed analysis documents for embedding backfill."""
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .in_(
@@ -1466,6 +1543,5 @@ class DocumentRepository(BaseRepository, ExternalSyncMixin):
             )
             .order("updated_at", desc=False)
             .limit(limit)
-            .execute()
         )
         return self._many(response)

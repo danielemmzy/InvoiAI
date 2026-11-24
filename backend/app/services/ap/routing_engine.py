@@ -64,6 +64,8 @@ _RULE_NON_NULLABLE = frozenset({
 })
 
 
+from app.core.db import execute
+
 def approval_rule_from_row(row: dict[str, Any]) -> ApprovalRule:
     """Convert an ``ap_approval_rules`` row into the routing domain model.
 
@@ -432,11 +434,10 @@ class APRoutingEngine:
     ) -> tuple[list[PlannedStep], str]:
 
         rows = (
-            self.db.table("org_members")
+            (await execute(self.db.table("org_members")
             .select("user_id,role,spending_limit,payment_approval_limit")
             .eq("org_id", str(org_id))
-            .eq("is_active", True)
-            .execute()
+            .eq("is_active", True)))
             .data or []
         )
 

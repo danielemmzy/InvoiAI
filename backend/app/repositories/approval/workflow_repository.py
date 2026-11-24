@@ -18,6 +18,7 @@ from app.core.enum.database import ApprovalDecision
 from app.mappers.approval_mapper import ApprovalWorkflowMapper
 from app.models.domain.approval import ApprovalWorkflow
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class ApprovalWorkflowRepository(BaseRepository):
@@ -129,12 +130,11 @@ class ApprovalWorkflowRepository(BaseRepository):
         document_id: UUID,
     ) -> ApprovalWorkflow | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("document_id", str(document_id))
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -146,13 +146,12 @@ class ApprovalWorkflowRepository(BaseRepository):
         offset: int = 0,
     ) -> list[ApprovalWorkflow]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
 
         return self._many(response)
@@ -163,13 +162,12 @@ class ApprovalWorkflowRepository(BaseRepository):
         status: ApprovalStatus,
     ) -> list[ApprovalWorkflow]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("status", status.value)
             .order("created_at", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -179,11 +177,10 @@ class ApprovalWorkflowRepository(BaseRepository):
         org_id: UUID,
     ):
 
-        response = (
+        response = await execute(
             self.pending()
             .select("*")
             .eq("org_id", str(org_id))
-            .execute()
         )
 
         return response.data or []
@@ -193,11 +190,10 @@ class ApprovalWorkflowRepository(BaseRepository):
         org_id: UUID,
     ):
 
-        response = (
+        response = await execute(
             self.queue()
             .select("*")
             .eq("org_id", str(org_id))
-            .execute()
         )
 
         return response.data or []
@@ -212,11 +208,12 @@ class ApprovalWorkflowRepository(BaseRepository):
         explicitly.
         """
         group_rows = (
-            self.db.table("ap_approval_group_members")
-            .select("group_id")
-            .eq("user_id", str(user_id))
-            .execute().data or []
-        )
+            await execute(
+                self.db.table("ap_approval_group_members")
+                .select("group_id")
+                .eq("user_id", str(user_id))
+            )
+        ).data or []
         group_ids = [str(r["group_id"]) for r in group_rows if r.get("group_id")]
 
         query = (
@@ -228,7 +225,7 @@ class ApprovalWorkflowRepository(BaseRepository):
             .eq("org_id", str(org_id))
             .eq("decision", ApprovalDecision.PENDING.value)
         )
-        rows = query.execute().data or []
+        rows = (await execute(query)).data or []
 
         visible = []
         for row in rows:
@@ -245,26 +242,32 @@ class ApprovalWorkflowRepository(BaseRepository):
 
         workflow_ids = list({str(r["workflow_id"]) for r in visible})
         workflows = (
-            self.db.table("approval_workflows").select(
-                "id,document_id,initiated_at,due_date,is_urgent,status"
-            ).eq("org_id", str(org_id)).in_("id", workflow_ids).execute().data or []
-        )
+            await execute(
+                self.db.table("approval_workflows").select(
+                    "id,document_id,initiated_at,due_date,is_urgent,status"
+                ).eq("org_id", str(org_id)).in_("id", workflow_ids)
+            )
+        ).data or []
         workflow_map = {str(r["id"]): r for r in workflows}
 
         document_ids = list({str(workflow_map[str(r["workflow_id"])]["document_id"]) for r in visible if str(r["workflow_id"]) in workflow_map})
         documents = (
-            self.db.table("documents").select(
-                "id,document_number,vendor_name,total_amount,currency,document_type"
-            ).eq("org_id", str(org_id)).in_("id", document_ids).execute().data or []
-        )
+            await execute(
+                self.db.table("documents").select(
+                    "id,document_number,vendor_name,total_amount,currency,document_type"
+                ).eq("org_id", str(org_id)).in_("id", document_ids)
+            )
+        ).data or []
         document_map = {str(r["id"]): r for r in documents}
 
         analyses = (
-            self.db.table("document_analyses").select(
-                "document_id,health_score,risk_level,recommendation,created_at"
-            ).eq("org_id", str(org_id)).in_("document_id", document_ids)
-            .order("created_at", desc=True).execute().data or []
-        )
+            await execute(
+                self.db.table("document_analyses").select(
+                    "document_id,health_score,risk_level,recommendation,created_at"
+                ).eq("org_id", str(org_id)).in_("document_id", document_ids)
+                .order("created_at", desc=True)
+            )
+        ).data or []
         analysis_map = {}
         for row in analyses:
             analysis_map.setdefault(str(row["document_id"]), row)
@@ -318,13 +321,12 @@ class ApprovalWorkflowRepository(BaseRepository):
         workflow_id: UUID,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.db.table("approval_steps")
             .select("id")
             .eq("workflow_id", str(workflow_id))
             .eq("decision", ApprovalDecision.PENDING.value)
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)
@@ -334,12 +336,11 @@ class ApprovalWorkflowRepository(BaseRepository):
         workflow_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.db.table("approval_steps")
             .select("id", count="exact")
             .eq("workflow_id", str(workflow_id))
             .eq("decision", ApprovalDecision.PENDING.value)
-            .execute()
         )
 
         return response.count or 0

@@ -7,6 +7,7 @@ from app.core.enum.database import IntegrationProvider
 from app.mappers.payment_mapper import PaymentMapper
 from app.models.domain.payment import Payment
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class PaymentRepository(BaseRepository):
@@ -75,14 +76,13 @@ class PaymentRepository(BaseRepository):
         external_id: str,
     ) -> Payment | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("provider", provider.value)
             .eq("external_id", external_id)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -92,13 +92,12 @@ class PaymentRepository(BaseRepository):
         payment: Payment | dict,
     ) -> Payment | None:
 
-        response = (
+        response = await execute(
             self.table()
             .upsert(
                 self.mapper.to_insert(payment),
                 on_conflict="org_id,provider,external_id",
             )
-            .execute()
         )
 
         return self._one(response)
@@ -113,7 +112,7 @@ class PaymentRepository(BaseRepository):
         limit: int = 100,
     ) -> list[Payment]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -122,7 +121,6 @@ class PaymentRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -132,7 +130,7 @@ class PaymentRepository(BaseRepository):
         document_id: UUID,
     ) -> list[Payment]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("document_id", str(document_id))
@@ -140,7 +138,6 @@ class PaymentRepository(BaseRepository):
                 "payment_date",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -150,7 +147,7 @@ class PaymentRepository(BaseRepository):
         vendor_id: UUID,
     ) -> list[Payment]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("vendor_id", str(vendor_id))
@@ -158,7 +155,6 @@ class PaymentRepository(BaseRepository):
                 "payment_date",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -204,14 +200,13 @@ class PaymentRepository(BaseRepository):
         external_id: str,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("org_id", str(org_id))
             .eq("provider", provider.value)
             .eq("external_id", external_id)
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)

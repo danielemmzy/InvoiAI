@@ -64,7 +64,10 @@ function MfaPageContent() {
     setBusy(true);
     setError("");
     try {
-      setEnrollment(await authApi.mfaEnroll("InvoiAI authenticator"));
+      const result = await authApi.mfaEnroll("InvoiAI authenticator");
+      setEnrollment(result);
+      const challenge = await authApi.mfaChallenge(result.factor_id);
+      setChallengeId(challenge.challenge_id);
     } catch (reason) {
       setError(getErrorMessage(reason, "Could not start authenticator setup."));
     } finally {
@@ -72,12 +75,15 @@ function MfaPageContent() {
     }
   }
 
-  async function startChallenge() {
-    if (!factorId) return;
+  async function startChallenge(targetFactorId = enrollment?.factor_id || factorId) {
+    if (!targetFactorId) {
+      setError("Choose an authenticator before starting verification.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const result = await authApi.mfaChallenge(factorId);
+      const result = await authApi.mfaChallenge(targetFactorId);
       setChallengeId(result.challenge_id);
     } catch (reason) {
       setError(getErrorMessage(reason, "Could not start the verification challenge."));
@@ -89,7 +95,10 @@ function MfaPageContent() {
   async function verifyCode(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const currentFactorId = enrollment?.factor_id || factorId;
-    if (!challengeId || !currentFactorId) return;
+    if (!challengeId || !currentFactorId) {
+      setError("Start a verification challenge before entering your authenticator code.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -249,8 +258,12 @@ function MfaPageContent() {
               <p>Scan this code with your authenticator app. You can also enter the setup key manually.</p>
               {enrollment.qr_code ? <img alt="Authenticator setup QR code" width={220} height={220} style={{ width: 220, maxWidth: "100%", height: "auto", border: "1px solid var(--ia-line)", borderRadius: 12, padding: 8, background: "white" }} src={mfaQrImageSource(enrollment.qr_code)} /> : null}
               <div className="auth-field"><label htmlFor="totp-secret">Setup key</label><input id="totp-secret" type="text" readOnly value={enrollment.secret || ""} autoComplete="off" /></div>
-              <button type="button" className="btn-secondary" onClick={() => { setEnrollment(null); setError(""); }}>Cancel setup</button>
-              <VerificationForm code={code} setCode={setCode} busy={busy} onSubmit={verifyCode} submitLabel="Verify authenticator" />
+              {!challengeId ? <button type="button" className="btn-secondary" disabled={busy} onClick={() => void startChallenge(enrollment.factor_id)}>
+                {busy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
+                Retry verification setup
+              </button> : null}
+              <button type="button" className="btn-secondary" onClick={() => { setEnrollment(null); setError(""); setChallengeId(null); }}>Cancel setup</button>
+              {challengeId ? <VerificationForm code={code} setCode={setCode} busy={busy} onSubmit={verifyCode} submitLabel="Verify authenticator" /> : null}
             </div>
           ) : null}
 

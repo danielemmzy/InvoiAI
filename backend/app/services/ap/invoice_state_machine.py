@@ -23,10 +23,12 @@ TRANSITIONS = {
     InvoiceAPStatus.RECONCILED: {InvoiceAPStatus.PAYMENT_READY},
 }
 
+from app.core.db import execute
+
 class InvoiceStateMachine:
     def __init__(self, db=None): self.db = db or get_supabase()
     async def get_status(self, document_id: UUID) -> InvoiceAPStatus:
-        row=self.db.table("documents").select("ap_status").eq("id",str(document_id)).single().execute().data
+        row=(await execute(self.db.table("documents").select("ap_status").eq("id",str(document_id)).single())).data
         return InvoiceAPStatus(row.get("ap_status") or InvoiceAPStatus.RECEIVED.value)
     def can_transition(self, from_status, to_status):
         return to_status in TRANSITIONS.get(InvoiceAPStatus(from_status), set())
@@ -35,6 +37,6 @@ class InvoiceStateMachine:
         if current == to_status: return current
         if not self.can_transition(current,to_status):
             raise ValueError(f"Invalid AP transition: {current.value} -> {to_status.value}")
-        self.db.table("documents").update({"ap_status":to_status.value,"updated_at":datetime.now(UTC).isoformat()}).eq("id",str(document_id)).eq("org_id",str(org_id)).execute()
-        self.db.table("invoice_status_log").insert({"org_id":str(org_id),"document_id":str(document_id),"from_status":current.value,"to_status":to_status.value,"triggered_by":triggered_by,"actor_id":str(actor_id) if actor_id else None,"reason":reason,"metadata":metadata or {}}).execute()
+        await execute(self.db.table("documents").update({"ap_status":to_status.value,"updated_at":datetime.now(UTC).isoformat()}).eq("id",str(document_id)).eq("org_id",str(org_id)))
+        await execute(self.db.table("invoice_status_log").insert({"org_id":str(org_id),"document_id":str(document_id),"from_status":current.value,"to_status":to_status.value,"triggered_by":triggered_by,"actor_id":str(actor_id) if actor_id else None,"reason":reason,"metadata":metadata or {}}))
         return to_status

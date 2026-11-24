@@ -61,6 +61,8 @@ import asyncio
 router = APIRouter(prefix="/finance", tags=["Finance"])
 
 
+from app.core.db import execute, gather_queries
+
 def _owner(
     user: AuthUser,
     ctx: OrganizationContext,
@@ -296,14 +298,26 @@ async def finance_summary(
     async def load():
         month = date.today().replace(day=1)
         db = get_supabase()
-        def query():
-            income = db.table("income_entries").select("amount").eq("owner_type", ot).eq("owner_id", oid).gte("received_date", month.isoformat()).execute().data or []
-            expenses = db.table("expenses").select("amount,category,expense_date,description").eq("owner_type", ot).eq("owner_id", oid).gte("expense_date", month.isoformat()).execute().data or []
-            accounts = db.table("financial_accounts").select("id,name,account_type,institution_name,current_balance,available_balance,currency,is_manual,last_synced_at").eq("owner_type", ot).eq("owner_id", oid).eq("is_active", True).execute().data or []
-            goals = db.table("goals").select("id,name,target_amount,current_amount,target_date,status").eq("owner_type", ot).eq("owner_id", oid).eq("status", "active").execute().data or []
-            debts = db.table("debts").select("balance").eq("owner_type", ot).eq("owner_id", oid).execute().data or []
-            return income, expenses, accounts, goals, debts
-        income, expenses, accounts, goals, debts = await _db(query)
+        # Five independent reads: run them together so the summary costs one
+        # round trip of latency instead of five.
+        (
+            income_response,
+            expenses_response,
+            accounts_response,
+            goals_response,
+            debts_response,
+        ) = await gather_queries(
+            db.table("income_entries").select("amount").eq("owner_type", ot).eq("owner_id", oid).gte("received_date", month.isoformat()),
+            db.table("expenses").select("amount,category,expense_date,description").eq("owner_type", ot).eq("owner_id", oid).gte("expense_date", month.isoformat()),
+            db.table("financial_accounts").select("id,name,account_type,institution_name,current_balance,available_balance,currency,is_manual,last_synced_at").eq("owner_type", ot).eq("owner_id", oid).eq("is_active", True),
+            db.table("goals").select("id,name,target_amount,current_amount,target_date,status").eq("owner_type", ot).eq("owner_id", oid).eq("status", "active"),
+            db.table("debts").select("balance").eq("owner_type", ot).eq("owner_id", oid),
+        )
+        income = income_response.data or []
+        expenses = expenses_response.data or []
+        accounts = accounts_response.data or []
+        goals = goals_response.data or []
+        debts = debts_response.data or []
         total_income = sum((Decimal(str(x["amount"])) for x in income), Decimal("0"))
         total_spend = sum((Decimal(str(x["amount"])) for x in expenses), Decimal("0"))
         assets = sum((Decimal(str(x.get("current_balance") or 0)) for x in accounts if x.get("account_type") not in ("credit_card", "loan")), Decimal("0"))
@@ -354,7 +368,7 @@ async def create_financial_account(
         "institution_name": payload.get("institution_name"), "currency": payload.get("currency", "USD"),
         "current_balance": str(balance), "available_balance": payload.get("available_balance"), "is_manual": True,
     }
-    result = await _db(lambda: get_supabase().table("financial_accounts").insert(row).execute().data[0])
+    result = (await execute(get_supabase().table("financial_accounts").insert(row))).data[0]
     await _invalidate_finance(ot, oid)
     return result
 
@@ -371,7 +385,7 @@ async def list_financial_accounts(
     ot, oid = _owner_values(user, ctx)
     key = f"{_cache_prefix(ot, oid)}:accounts"
     async def load():
-        return await _db(lambda: get_supabase().table("financial_accounts").select("*").eq("owner_type", ot).eq("owner_id", oid).eq("is_active", True).order("created_at", desc=True).execute().data or [])
+        return (await execute(get_supabase().table("financial_accounts").select("*").eq("owner_type", ot).eq("owner_id", oid).eq("is_active", True).order("created_at", desc=True))).data or []
     return await cache.remember(key=key, ttl=30, loader=load)
 
 
@@ -397,7 +411,7 @@ async def create_transaction(
         raise HTTPException(422, "Transaction amount cannot be negative")
     account_id = payload.get("account_id")
     if account_id:
-        owned = await _db(lambda: get_supabase().table("financial_accounts").select("id").eq("id", account_id).eq("owner_type", ot).eq("owner_id", oid).eq("is_active", True).limit(1).execute().data)
+        owned = (await execute(get_supabase().table("financial_accounts").select("id").eq("id", account_id).eq("owner_type", ot).eq("owner_id", oid).eq("is_active", True).limit(1))).data
         if not owned:
             raise HTTPException(404, "Financial account not found")
     row = {
@@ -408,7 +422,7 @@ async def create_transaction(
         "external_id": payload.get("external_id"), "metadata": payload.get("metadata") or {},
     }
     try:
-        result = await _db(lambda: get_supabase().table("financial_transactions").insert(row).execute().data[0])
+        result = (await execute(get_supabase().table("financial_transactions").insert(row))).data[0]
     except Exception as exc:
         # Preserve database uniqueness semantics for imported/external transactions.
         if "uq_financial_tx_external" in str(exc) or "duplicate key" in str(exc).lower():
@@ -455,7 +469,7 @@ async def list_financial_alerts(
     ot, oid = _owner_values(user, ctx)
     key = f"{_cache_prefix(ot, oid)}:alerts"
     async def load():
-        return await _db(lambda: get_supabase().table("financial_alerts").select("*").eq("owner_type", ot).eq("owner_id", oid).eq("is_dismissed", False).order("created_at", desc=True).limit(20).execute().data or [])
+        return (await execute(get_supabase().table("financial_alerts").select("*").eq("owner_type", ot).eq("owner_id", oid).eq("is_dismissed", False).order("created_at", desc=True).limit(20))).data or []
     return await cache.remember(key=key, ttl=20, loader=load)
 
 
@@ -471,7 +485,7 @@ async def net_worth_history(
     ot, oid = _owner_values(user, ctx)
     key = f"{_cache_prefix(ot, oid)}:net-worth"
     async def load():
-        return await _db(lambda: get_supabase().table("net_worth_snapshots").select("*").eq("owner_type", ot).eq("owner_id", oid).order("snapshot_date", desc=True).limit(24).execute().data or [])
+        return (await execute(get_supabase().table("net_worth_snapshots").select("*").eq("owner_type", ot).eq("owner_id", oid).order("snapshot_date", desc=True).limit(24))).data or []
     return await cache.remember(key=key, ttl=60, loader=load)
 
 
@@ -489,7 +503,7 @@ async def statement_reminder(
     key = f"{_cache_prefix(ot, oid)}:statement-reminder"
 
     async def load():
-        rows = await _db(lambda: get_supabase().table("statement_imports").select("created_at,statement_end").eq("owner_type", ot).eq("owner_id", oid).order("created_at", desc=True).limit(1).execute().data or [])
+        rows = (await execute(get_supabase().table("statement_imports").select("created_at,statement_end").eq("owner_type", ot).eq("owner_id", oid).order("created_at", desc=True).limit(1))).data or []
         last = None
         if rows:
             try:

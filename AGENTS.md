@@ -12,3 +12,18 @@
 - For a code review, choose one review workflow that fits the requested scope instead of producing duplicate reports.
 - Read and preserve applicable nested `AGENTS.md` instructions. In particular, frontend work must also follow `frontend/AGENTS.md`.
 - The user's request and project-specific instructions take precedence over general skill defaults. When skills overlap, use the task-specific skill for its specialty and keep the shared guidance consistent.
+- Matt Pocock's engineering skills are installed under `.agents/skills/` (`implement`, `implement-spec`, `to-spec`, `to-tickets`, `code-review`, `diagnosing-bugs`, `tdd`, `triage`, `pr`, `retro`, and others). Prefer them for spec-to-implementation, review, and triage work; the config below tells them where tickets and domain docs live.
+
+## Agent skills
+
+### Issue tracker
+
+Local Markdown only: numbered tickets in `docs/AP_MVP_TICKET_PROPOSAL.md`, direction in `docs/PRODUCTION_ROADMAP.md`, evidence under `docs/database/ticket-*`. No GitHub/Linear tracker. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+No label vocabulary and no tracker labels; ticket state lives in the ticket document. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: roadmap as scope authority, ADRs in `docs/adr/`. See `docs/agents/domain.md`.

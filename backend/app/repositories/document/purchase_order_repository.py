@@ -7,6 +7,7 @@ from app.core.enum.database import IntegrationProvider
 from app.mappers.purchase_order_mapper import PurchaseOrderMapper
 from app.models.domain.purchase_order import PurchaseOrder
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class PurchaseOrderRepository(BaseRepository):
@@ -72,13 +73,12 @@ class PurchaseOrderRepository(BaseRepository):
         po_number: str,
     ) -> PurchaseOrder | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("po_number", po_number)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -95,14 +95,13 @@ class PurchaseOrderRepository(BaseRepository):
         external_id: str,
     ) -> PurchaseOrder | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("provider", provider.value)
             .eq("external_id", external_id)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -117,7 +116,7 @@ class PurchaseOrderRepository(BaseRepository):
         org_id: UUID,
     ) -> list[PurchaseOrder]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -126,7 +125,6 @@ class PurchaseOrderRepository(BaseRepository):
                 "issued_date",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -160,10 +158,9 @@ class PurchaseOrderRepository(BaseRepository):
         if date_to is not None:
             query = query.lte("issued_date", date_to.isoformat())
 
-        response = (
+        response = await execute(
             query.order("issued_date", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
 
         return response.data or [], response.count or 0
@@ -175,7 +172,7 @@ class PurchaseOrderRepository(BaseRepository):
         vendor_id: UUID,
     ) -> list[PurchaseOrder]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -184,7 +181,6 @@ class PurchaseOrderRepository(BaseRepository):
                 "issued_date",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(response)

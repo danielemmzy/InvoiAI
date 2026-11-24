@@ -7,6 +7,7 @@ from app.repositories.document.document_repository import DocumentRepository
 
 class FakeResponse:
     data = []
+    count = 0
 
 
 class FakeQuery:

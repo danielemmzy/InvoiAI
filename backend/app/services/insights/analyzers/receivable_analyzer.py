@@ -62,11 +62,12 @@ class ReceivableAnalyzer:
     async def _overdue_documents(self, org_id: UUID) -> list:
         today = datetime.now(UTC).date()
 
-        candidates = []
-        for status in (DocumentStatus.NEEDS_REVIEW, DocumentStatus.IN_APPROVAL):
-            candidates.extend(
-                await self.documents.list_by_status(org_id, status, limit=200)
-            )
+        # One query for both statuses instead of one list query per status.
+        candidates = await self.documents.list_by_statuses(
+            org_id,
+            [DocumentStatus.NEEDS_REVIEW, DocumentStatus.IN_APPROVAL],
+            limit=200,
+        )
 
         return [
             d for d in candidates

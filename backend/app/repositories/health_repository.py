@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class HealthRepository(BaseRepository):
@@ -9,5 +10,5 @@ class HealthRepository(BaseRepository):
     table_name = "organizations"
 
     async def ping(self) -> bool:
-        response = self.table().select("id").limit(1).execute()
+        response = await execute(self.table().select("id").limit(1))
         return bool(response.data is not None)

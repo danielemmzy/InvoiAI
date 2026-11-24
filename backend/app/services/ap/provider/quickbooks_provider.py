@@ -24,6 +24,8 @@ from app.services.ap.bill_sync_service import BillSyncService
 from app.services.ap.provider.accounting_provider import AccountingProvider, NoActiveAccountingProviderError
 
 
+from app.core.db import execute
+
 class QuickBooksAccountingProvider(AccountingProvider):
 
     name = "quickbooks"
@@ -42,7 +44,7 @@ class QuickBooksAccountingProvider(AccountingProvider):
         )
         if self.connection_id:
             query = query.eq("id", self.connection_id)
-        conn = query.limit(1).execute().data
+        conn = (await execute(query.limit(1))).data
         if not conn or not conn[0].get("realm_id"):
             raise NoActiveAccountingProviderError(f"No active QuickBooks connection for org {self.org_id}.")
         return conn[0]["realm_id"]

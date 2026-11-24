@@ -17,6 +17,8 @@ from app.workers.ap_matching_worker import APMatchingWorker
 logger = logging.getLogger(__name__)
 
 
+from app.core.db import execute
+
 class ExceptionService:
     def __init__(self):
         self.repo = InvoiceExceptionRepository()
@@ -32,7 +34,7 @@ class ExceptionService:
 
     async def resolve(self, org_id, exception_id, user_id, note, waive=False):
         note = (note or "").strip()
-        existing = self.db.table("invoice_exceptions").select("id,document_id,exception_type,status").eq("org_id", str(org_id)).eq("id", str(exception_id)).limit(1).execute().data or []
+        existing = (await execute(self.db.table("invoice_exceptions").select("id,document_id,exception_type,status").eq("org_id", str(org_id)).eq("id", str(exception_id)).limit(1))).data or []
         if not existing:
             raise ValueError("Exception not found.")
         exception = existing[0]
@@ -46,10 +48,10 @@ class ExceptionService:
         document_id = UUID(exception["document_id"])
         if exception.get("exception_type") == "gl_coding_required" and not waive:
             # Acknowledge only after the actual line-level issue has been fixed.
-            lines = self.db.table("document_line_items").select("id,metadata,gl_account").eq("org_id", str(org_id)).eq("document_id", str(document_id)).execute().data or []
+            lines = (await execute(self.db.table("document_line_items").select("id,metadata,gl_account").eq("org_id", str(org_id)).eq("document_id", str(document_id)))).data or []
             if not lines:
                 raise ValueError("No invoice line items are saved. Open the source invoice, correct the lines, save, then recheck this exception.")
-            accounts = self.db.table("chart_of_accounts").select("id,account_code,account_name,is_postable,is_active").eq("org_id", str(org_id)).execute().data or []
+            accounts = (await execute(self.db.table("chart_of_accounts").select("id,account_code,account_name,is_postable,is_active").eq("org_id", str(org_id)))).data or []
             valid_accounts = [a for a in accounts if bool(a.get("is_postable")) and a.get("is_active") is not False]
             missing = []
             for line in lines:
@@ -64,11 +66,11 @@ class ExceptionService:
                 raise ValueError(f"{len(missing)} invoice line(s) still need a valid, postable GL account. Open the source invoice, assign an account to every line, save the corrections, then click Resolve & recheck.")
 
         status = APExceptionStatus.WAIVED.value if waive else APExceptionStatus.RESOLVED.value
-        self.db.table("invoice_exceptions").update({
+        (await execute(self.db.table("invoice_exceptions").update({
             "status": status, "resolved_by": str(user_id), "resolved_at": datetime.now(UTC).isoformat(),
             "resolution_note": note or ("Corrected and marked resolved by reviewer." if not waive else None),
             "updated_at": datetime.now(UTC).isoformat(),
-        }).eq("id", str(exception_id)).eq("org_id", str(org_id)).execute()
+        }).eq("id", str(exception_id)).eq("org_id", str(org_id))))
 
         try:
             await self.audit.log(
@@ -84,7 +86,7 @@ class ExceptionService:
             # The resolution state is already persisted; don't make the UI report
             # a failed resolution after the mutation. The logging failure remains visible.
             logger.exception("Failed to audit AP exception action for %s", exception_id)
-        open_rows = self.db.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).in_("status", ["open", "in_review", "escalated"]).execute().data or []
+        open_rows = (await execute(self.db.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).in_("status", ["open", "in_review", "escalated"]))).data or []
         if open_rows:
             return {"updated": True, "status": status, "document_id": str(document_id), "workflow_resumed": False}
 
@@ -122,20 +124,20 @@ class ExceptionService:
             await APCodingWorker().execute(document_id=document_id)
         except Exception as exc:
             logger.exception("AP coding retry after exception resolution failed for %s", document_id)
-            rows = self.db.table("documents").select("org_id,ap_status").eq("id", str(document_id)).limit(1).execute().data or []
+            rows = (await execute(self.db.table("documents").select("org_id,ap_status").eq("id", str(document_id)).limit(1))).data or []
             if rows:
                 org_id = UUID(rows[0]["org_id"])
                 current = await self.state.get_status(document_id)
                 if current == InvoiceAPStatus.CODING:
                     await self.state.transition(document_id, org_id, InvoiceAPStatus.CODING_EXCEPTION, triggered_by="worker", reason="GL coding retry failed")
-                self.db.table("documents").update({
+                (await execute(self.db.table("documents").update({
                     "status": "needs_review", "processing_step": "ap_coding_error",
                     "processing_message": "GL coding retry failed. Your saved invoice data was retained. Review the service error and correct missing account assignments before retrying.",
                     "processing_progress": 85, "gl_coding_status": "needs_review", "error_message": str(exc)[:500],
-                }).eq("id", str(document_id)).eq("org_id", str(org_id)).execute()
-                open_rows = self.db.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).eq("exception_type", "gl_coding_required").in_("status", ["open", "in_review", "escalated"]).limit(1).execute().data or []
+                }).eq("id", str(document_id)).eq("org_id", str(org_id))))
+                open_rows = (await execute(self.db.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).eq("exception_type", "gl_coding_required").in_("status", ["open", "in_review", "escalated"]).limit(1))).data or []
                 if not open_rows:
-                    self.db.table("invoice_exceptions").insert({
+                    await execute(self.db.table("invoice_exceptions").insert({
                         "org_id": str(org_id), "document_id": str(document_id), "exception_type": "gl_coding_required",
                         "severity": "warning", "title": "GL coding retry failed", "details": {"error": str(exc)[:500], "retryable": True},
-                    }).execute()
+                    }))

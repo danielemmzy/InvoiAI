@@ -11,6 +11,20 @@ def factors_for_user(access_token: str):
     return get_user_supabase(access_token).auth.mfa.list_factors()
 
 
+def has_verified_totp_factor(factors) -> bool:
+    """Whether the supplied factors include a verified TOTP authenticator.
+
+    Mirrors Supabase's ``list_factors().totp`` filter so the enrollment gate
+    behaves identically without a second auth-service round trip.
+    """
+
+    return any(
+        getattr(factor, "factor_type", None) == "totp"
+        and getattr(factor, "status", None) == "verified"
+        for factor in (factors or [])
+    )
+
+
 def has_admin_membership(user_id: UUID | str) -> bool:
     rows = (
         get_supabase()

@@ -16,6 +16,8 @@ from app.workers.base import BaseWorker
 logger = logging.getLogger(__name__)
 
 
+from app.core.db import execute
+
 class BillSyncWorker(BaseWorker):
     name = "bill-sync-worker"
 
@@ -26,11 +28,10 @@ class BillSyncWorker(BaseWorker):
 
     async def run(self, *, document_id: UUID):
         rows = (
-            self.db.table("documents")
+            (await execute(self.db.table("documents")
             .select("org_id,ap_status,ap_enabled,erp_bill_id")
             .eq("id", str(document_id))
-            .limit(1)
-            .execute()
+            .limit(1)))
             .data
             or []
         )
@@ -51,7 +52,7 @@ class BillSyncWorker(BaseWorker):
 
         # Compare-and-set status claim: only one worker can move APPROVED -> SYNCING.
         claimed = (
-            self.db.table("documents")
+            (await execute(self.db.table("documents")
             .update(
                 {
                     "ap_status": InvoiceAPStatus.SYNCING_TO_ERP.value,
@@ -62,8 +63,7 @@ class BillSyncWorker(BaseWorker):
             .eq("id", str(document_id))
             .eq("org_id", str(doc["org_id"]))
             .eq("ap_status", InvoiceAPStatus.APPROVED.value)
-            .select("id")
-            .execute()
+            .select("id")))
             .data
             or []
         )
@@ -85,12 +85,11 @@ class BillSyncWorker(BaseWorker):
             # compare-and-set against SYNCING_TO_ERP: the adapter may persist
             # before returning, so a second CAS would falsely fail.
             confirmed = (
-                self.db.table("documents")
+                (await execute(self.db.table("documents")
                 .select("erp_bill_id,ap_status")
                 .eq("id", str(document_id))
                 .eq("org_id", str(doc["org_id"]))
-                .single()
-                .execute()
+                .single()))
                 .data
             )
             if not confirmed.get("erp_bill_id") or str(
@@ -100,7 +99,7 @@ class BillSyncWorker(BaseWorker):
                     "ERP bill was created but local confirmation could not be "
                     "verified; reconcile before retrying."
                 )
-            (
+            await execute(
                 self.db.table("documents")
                 .update(
                     {
@@ -111,7 +110,6 @@ class BillSyncWorker(BaseWorker):
                 )
                 .eq("id", str(document_id))
                 .eq("org_id", str(doc["org_id"]))
-                .execute()
             )
         except Exception as exc:
             record_provider_sync(
@@ -121,18 +119,17 @@ class BillSyncWorker(BaseWorker):
             # failure. If the adapter persisted an ERP bill id before the
             # exception, adopt it instead of retrying and risking a duplicate.
             adopted = (
-                self.db.table("documents")
+                (await execute(self.db.table("documents")
                 .select("erp_bill_id,ap_status")
                 .eq("id", str(document_id))
                 .eq("org_id", str(doc["org_id"]))
-                .limit(1)
-                .execute()
+                .limit(1)))
                 .data
                 or []
             )
             if adopted and adopted[0].get("erp_bill_id"):
                 external_id = adopted[0]["erp_bill_id"]
-                (
+                await execute(
                     self.db.table("documents")
                     .update(
                         {
@@ -143,10 +140,9 @@ class BillSyncWorker(BaseWorker):
                     )
                     .eq("id", str(document_id))
                     .eq("org_id", str(doc["org_id"]))
-                    .execute()
                 )
             else:
-                (
+                await execute(
                     self.db.table("documents")
                     .update(
                         {
@@ -158,7 +154,6 @@ class BillSyncWorker(BaseWorker):
                     .eq("id", str(document_id))
                     .eq("org_id", str(doc["org_id"]))
                     .eq("ap_status", InvoiceAPStatus.SYNCING_TO_ERP.value)
-                    .execute()
                 )
                 raise
 
@@ -179,14 +174,13 @@ class BillSyncWorker(BaseWorker):
 
     async def run_pending(self, limit: int = 25):
         rows = (
-            self.db.table("documents")
+            (await execute(self.db.table("documents")
             .select("id")
             .eq("ap_enabled", True)
             .eq("ap_status", InvoiceAPStatus.APPROVED.value)
             .eq("document_type", "invoice")
             .is_("erp_bill_id", None)
-            .limit(limit)
-            .execute()
+            .limit(limit)))
             .data
             or []
         )

@@ -114,6 +114,92 @@ async def test_existing_open_exception_is_refreshed_not_duplicated():
 
 
 @pytest.mark.asyncio
+async def test_batch_upsert_uses_constant_query_count():
+    class _CountingQuery:
+        def __init__(self, db):
+            self.db = db
+            self._insert = None
+            self._update = None
+
+        def select(self, *_args, **_kwargs): return self
+        def eq(self, *_args, **_kwargs): return self
+        def in_(self, *_args, **_kwargs): return self
+        def limit(self, *_args, **_kwargs): return self
+
+        def insert(self, payload):
+            self._insert = payload
+            return self
+
+        def update(self, payload):
+            self._update = payload
+            return self
+
+        def execute(self):
+            if self._insert is not None:
+                self.db.queries.append("insert")
+                rows = self._insert if isinstance(self._insert, list) else [self._insert]
+                now = datetime.now(UTC).isoformat()
+                return SimpleNamespace(data=[
+                    {**row, "id": str(uuid4()), "created_at": now, "updated_at": now}
+                    for row in rows
+                ])
+            if self._update is not None:
+                self.db.queries.append("update")
+                return SimpleNamespace(data=[
+                    {**self.db.open_row, **self._update}
+                ])
+            self.db.queries.append("select")
+            return SimpleNamespace(data=[self.db.open_row] if self.db.has_open else [])
+
+    class _CountingDb:
+        def __init__(self):
+            self.queries = []
+            self.has_open = True
+            self.open_row = {
+                "id": str(uuid4()),
+                "org_id": str(ORG),
+                "document_id": str(DOC),
+                "exception_type": APExceptionType.PRICE_MISMATCH.value,
+                "status": APExceptionStatus.IN_REVIEW.value,
+                "severity": "warning",
+                "title": "Price mismatch",
+                "details": {},
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+
+        def table(self, _name):
+            return _CountingQuery(self)
+
+    db = _CountingDb()
+    repo = InvoiceExceptionRepository()
+    repo.db = db
+    now = datetime.now(UTC)
+
+    def make(exception_type):
+        return InvoiceException(
+            id=uuid4(),
+            org_id=ORG,
+            document_id=DOC,
+            exception_type=exception_type,
+            severity="warning",
+            title=exception_type.value,
+            created_at=now,
+            updated_at=now,
+        )
+
+    await repo.upsert_open_many([
+        make(APExceptionType.PRICE_MISMATCH),
+        make(APExceptionType.QUANTITY_MISMATCH),
+        make(APExceptionType.MISSING_RECEIPT),
+    ])
+
+    # One read, one bulk insert for the two new findings, one refresh for the
+    # already-open price mismatch.
+    assert db.queries == ["select", "insert", "update"]
+
+
+@pytest.mark.asyncio
 async def test_missing_exception_is_created():
     db = _FakeDb(has_open=False)
     repo = InvoiceExceptionRepository()

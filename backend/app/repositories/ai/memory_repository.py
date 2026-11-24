@@ -14,6 +14,7 @@ from app.models.domain.memory import (
     VendorMemory,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 # ============================================================
@@ -66,12 +67,11 @@ class DocumentMemoryRepository(BaseRepository):
         document_id: UUID,
     ) -> DocumentMemory | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("document_id", str(document_id))
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -81,12 +81,11 @@ class DocumentMemoryRepository(BaseRepository):
         org_id: UUID,
     ) -> list[DocumentMemory]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("updated_at", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -142,12 +141,11 @@ class OrganizationMemoryRepository(BaseRepository):
         org_id: UUID,
     ) -> OrganizationMemory | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -203,12 +201,11 @@ class VendorMemoryRepository(BaseRepository):
         vendor_id: UUID,
     ) -> VendorMemory | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("vendor_id", str(vendor_id))
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -218,12 +215,11 @@ class VendorMemoryRepository(BaseRepository):
         org_id: UUID,
     ) -> list[VendorMemory]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("updated_at", desc=True)
-            .execute()
         )
 
         return self._many(response)

@@ -21,6 +21,8 @@ from app.services.audit_service import AuditService
 from app.core.supabase import get_supabase
 
 
+from app.core.db import execute
+
 class ApprovalEngine:
     """
     Core approval workflow engine.
@@ -111,13 +113,8 @@ class ApprovalEngine:
             else:
                 step.decision = ApprovalDecision.SKIPPED
 
-            created_step = await self.steps.create_step(step)
-
-            if created_step is None:
-                raise RuntimeError(
-                    f"Failed to create approval step "
-                    f"{step.step_number}."
-                )
+        # One insert for every step instead of one per step.
+        await self.steps.create_steps(steps)
 
         await self._record_history(
             workflow_id=created_workflow.id,
@@ -344,9 +341,9 @@ class ApprovalEngine:
         """
         db = get_supabase()
         try:
-            doc_rows = (db.table("documents").select("id,created_by,ap_processed_by,currency,total_amount,vendor_name").eq("org_id", str(workflow.org_id)).eq("id", str(workflow.document_id)).limit(1).execute().data or [])
+            doc_rows = (await execute((db.table("documents").select("id,created_by,ap_processed_by,currency,total_amount,vendor_name").eq("org_id", str(workflow.org_id)).eq("id", str(workflow.document_id)).limit(1))).data or [])
             doc = doc_rows[0] if doc_rows else {}
-            sod_rows = (db.table("sod_rules").select("rule_key,enabled").eq("org_id", str(workflow.org_id)).eq("enabled", True).execute().data or [])
+            sod_rows = (await execute((db.table("sod_rules").select("rule_key,enabled").eq("org_id", str(workflow.org_id)).eq("enabled", True))).data or [])
             sod = {r.get("rule_key") for r in sod_rows}
 
             # Approval is a decision on a specific document state. Material
@@ -369,16 +366,16 @@ class ApprovalEngine:
                 raise PermissionError("Segregation-of-duties policy prevents the AP processor from approving the same invoice.")
 
             if workflow.workflow_type == "payment" and "separate_payment_authorizer" in sod:
-                bill_workflows = (db.table("approval_workflows").select("id").eq("org_id", str(workflow.org_id)).eq("document_id", str(workflow.document_id)).eq("workflow_type", "bill").execute().data or [])
+                bill_workflows = (await execute((db.table("approval_workflows").select("id").eq("org_id", str(workflow.org_id)).eq("document_id", str(workflow.document_id)).eq("workflow_type", "bill"))).data or [])
                 bill_ids = [str(x["id"]) for x in bill_workflows]
                 if bill_ids:
-                    prior_steps = (db.table("approval_steps").select("approver_id,claimed_by,decision").eq("org_id", str(workflow.org_id)).in_("workflow_id", bill_ids).eq("decision", "approved").execute().data or [])
+                    prior_steps = (await execute((db.table("approval_steps").select("approver_id,claimed_by,decision").eq("org_id", str(workflow.org_id)).in_("workflow_id", bill_ids).eq("decision", "approved"))).data or [])
                     if any(str(x.get("approver_id") or "") == str(actor_id) or str(x.get("claimed_by") or "") == str(actor_id) for x in prior_steps):
                         raise PermissionError("Segregation-of-duties policy requires a different member to authorize payment than the invoice approver.")
 
-            membership = (db.table("org_members").select("id").eq("org_id", str(workflow.org_id)).eq("user_id", str(actor_id)).eq("is_active", True).limit(1).execute().data or [])
+            membership = (await execute((db.table("org_members").select("id").eq("org_id", str(workflow.org_id)).eq("user_id", str(actor_id)).eq("is_active", True).limit(1))).data or [])
             if membership:
-                authorities = (db.table("approval_authorities").select("limit_amount,currency,effective_from,effective_until,is_active").eq("org_id", str(workflow.org_id)).eq("membership_id", membership[0]["id"]).eq("approval_type", "payment" if workflow.workflow_type == "payment" else "invoice").eq("is_active", True).execute().data or [])
+                authorities = (await execute((db.table("approval_authorities").select("limit_amount,currency,effective_from,effective_until,is_active").eq("org_id", str(workflow.org_id)).eq("membership_id", membership[0]["id"]).eq("approval_type", "payment" if workflow.workflow_type == "payment" else "invoice").eq("is_active", True))).data or [])
                 currency = str(doc.get("currency") or "").upper()
                 amount = Decimal(str(doc.get("total_amount") or workflow.document_amount or 0))
                 valid = False
@@ -429,9 +426,17 @@ class ApprovalEngine:
           short-circuits the whole workflow in process_decision.
         """
 
-        stage_steps = await self._get_steps_by_stage(
-            workflow_id=workflow.id,
-            stage_number=completed_step.stage_number,
+        # The current stage, the next stage and the last-stage test all need
+        # the same rows. One read of the workflow's steps replaces the three
+        # separate reads this used to perform.
+        all_steps = await self.steps.list_workflow_steps(workflow.id)
+        stage_steps = sorted(
+            (
+                step
+                for step in all_steps
+                if step.stage_number == completed_step.stage_number
+            ),
+            key=lambda step: step.step_number,
         )
 
         if workflow.execution_mode == "parallel":
@@ -445,11 +450,19 @@ class ApprovalEngine:
                 return workflow
 
         elif workflow.execution_mode == "any_one":
-            for sibling in stage_steps:
-                if sibling.id != completed_step.id and sibling.decision == ApprovalDecision.PENDING:
-                    await self.steps.update_step(sibling.id, {"decision": ApprovalDecision.SKIPPED.value})
+            withdrawn = [
+                sibling.id
+                for sibling in stage_steps
+                if sibling.id != completed_step.id and sibling.decision == ApprovalDecision.PENDING
+            ]
+            if withdrawn:
+                # One statement instead of one round trip per sibling.
+                await self.steps.update_steps(
+                    withdrawn,
+                    {"decision": ApprovalDecision.SKIPPED.value},
+                    org_id=workflow.org_id,
+                )
 
-        all_steps = await self.steps.list_workflow_steps(workflow.id)
         is_last_stage = not any(s.stage_number > completed_step.stage_number for s in all_steps)
 
         if is_last_stage:
@@ -480,9 +493,13 @@ class ApprovalEngine:
 
         next_stage_number = completed_step.stage_number + 1
 
-        next_stage_steps = await self._get_steps_by_stage(
-            workflow_id=workflow.id,
-            stage_number=next_stage_number,
+        next_stage_steps = sorted(
+            (
+                step
+                for step in all_steps
+                if step.stage_number == next_stage_number
+            ),
+            key=lambda step: step.step_number,
         )
 
         if not next_stage_steps:
@@ -496,17 +513,17 @@ class ApprovalEngine:
                     "Next approval step is not in an activatable state."
                 )
 
-            updated_step = await self.steps.update_step(
-                next_step.id,
-                {
-                    "decision": ApprovalDecision.PENDING.value,
-                },
-            )
+        # Activate the whole stage with one statement rather than one per step.
+        activated = await self.steps.update_steps(
+            [next_step.id for next_step in next_stage_steps],
+            {"decision": ApprovalDecision.PENDING.value},
+            org_id=workflow.org_id,
+        )
 
-            if updated_step is None:
-                raise RuntimeError(
-                    "Failed to activate next approval step."
-                )
+        if len(activated) != len(next_stage_steps):
+            raise RuntimeError(
+                "Failed to activate next approval step."
+            )
 
         updated_workflow = await self.workflows.update_workflow(
             workflow.id,

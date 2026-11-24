@@ -18,6 +18,7 @@ from app.core.enum.database import ApprovalDecision
 from app.mappers.approval_mapper import ApprovalStepMapper
 from app.models.domain.approval import ApprovalStep
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class ApprovalStepRepository(BaseRepository):
@@ -38,6 +39,30 @@ class ApprovalStepRepository(BaseRepository):
     ) -> ApprovalStep | None:
 
         return await self.create(step)
+
+    async def create_steps(
+        self,
+        steps: list[ApprovalStep | dict],
+    ) -> list[ApprovalStep]:
+        """Insert every step of a workflow in one statement.
+
+        A workflow with N approval stages used to cost N inserts. The domain
+        objects already carry their ids, so the caller does not need the
+        inserted representation back.
+        """
+
+        if not steps:
+            return []
+
+        payload = [self.mapper.to_insert(step) for step in steps]
+
+        response = await execute(self.table().insert(payload))
+
+        created = self.mapper.to_domain_list(response.data or [])
+
+        # PostgREST returns the inserted rows unless representation is
+        # suppressed; fall back to the caller's objects when it does not.
+        return created if len(created) == len(payload) else list(steps)
 
     async def get_step(
         self,
@@ -60,9 +85,42 @@ class ApprovalStepRepository(BaseRepository):
             data,
         )
 
+    async def update_steps(
+        self,
+        step_ids: list[UUID],
+        data,
+        *,
+        org_id: UUID | None = None,
+    ) -> list[ApprovalStep]:
+        """Apply the same change to several steps in one statement.
+
+        Used when a decision resolves a whole stage (withdrawing the other
+        approvers, or activating every step of the next stage). The previous
+        per-step ``update_step`` calls cost one round trip per approver.
+
+        ``org_id`` is an optional tenant guard: when it is supplied the update
+        also filters on it, so a step id from another organization can never be
+        touched even if it were passed in by mistake.
+        """
+
+        if not step_ids:
+            return []
+
+        payload = self.mapper.to_update(data)
+        payload["updated_at"] = datetime.now(UTC)
+
+        query = self.table().update(payload).in_(
+            "id", [str(step_id) for step_id in step_ids]
+        )
+        if org_id is not None:
+            query = query.eq("org_id", str(org_id))
+        response = await execute(query)
+
+        return self._many(response)
+
     async def claim_group_step(self, step_id: UUID, user_id: UUID) -> ApprovalStep | None:
         """Atomically claim an unclaimed pending group step."""
-        response = (
+        response = await execute(
             self.table()
             .update({
                 "approver_id": str(user_id),
@@ -73,7 +131,6 @@ class ApprovalStepRepository(BaseRepository):
             .eq("id", str(step_id))
             .eq("decision", ApprovalDecision.PENDING.value)
             .is_("claimed_by", "null")
-            .execute()
         )
         return self._one(response)
 
@@ -93,29 +150,48 @@ class ApprovalStepRepository(BaseRepository):
         workflow_id: UUID,
     ) -> list[ApprovalStep]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("workflow_id", str(workflow_id))
             .order("step_number")
-            .execute()
         )
 
         return self._many(response)
+
+    async def list_steps_for_workflows(
+        self,
+        workflow_ids: list[UUID],
+    ) -> dict[str, list[ApprovalStep]]:
+        """Return each workflow's steps in one query, grouped by workflow id."""
+
+        if not workflow_ids:
+            return {}
+
+        response = await execute(
+            self.table()
+            .select("*")
+            .in_("workflow_id", [str(workflow_id) for workflow_id in workflow_ids])
+            .order("step_number")
+        )
+
+        grouped: dict[str, list[ApprovalStep]] = {}
+        for step in self._many(response):
+            grouped.setdefault(str(step.workflow_id), []).append(step)
+        return grouped
 
     async def get_current_step(
         self,
         workflow_id: UUID,
     ) -> ApprovalStep | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("workflow_id", str(workflow_id))
             .eq("decision", ApprovalDecision.PENDING.value)
             .order("step_number")
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -125,7 +201,7 @@ class ApprovalStepRepository(BaseRepository):
         org_id: UUID,
     ) -> list[ApprovalStep]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -134,7 +210,6 @@ class ApprovalStepRepository(BaseRepository):
                 ApprovalDecision.PENDING.value,
             )
             .order("step_number")
-            .execute()
         )
 
         return self._many(response)
@@ -144,7 +219,7 @@ class ApprovalStepRepository(BaseRepository):
         approver_id: UUID,
     ) -> list[ApprovalStep]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("approver_id", str(approver_id))
@@ -153,7 +228,6 @@ class ApprovalStepRepository(BaseRepository):
                 ApprovalDecision.PENDING.value,
             )
             .order("due_date")
-            .execute()
         )
 
         return self._many(response)
@@ -163,14 +237,13 @@ class ApprovalStepRepository(BaseRepository):
         org_id: UUID,
     ) -> list[ApprovalStep]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("decision", ApprovalDecision.PENDING.value)
             .lt("due_date", datetime.now(UTC).isoformat())
             .order("due_date")
-            .execute()
         )
 
         return self._many(response)
@@ -287,12 +360,11 @@ class ApprovalStepRepository(BaseRepository):
         workflow_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id", count="exact")
             .eq("workflow_id", str(workflow_id))
             .eq("decision", ApprovalDecision.PENDING.value)
-            .execute()
         )
 
         return response.count or 0
@@ -303,7 +375,7 @@ class ApprovalStepRepository(BaseRepository):
         reminder_window_minutes: int = 60,
     ) -> list[ApprovalStep]:
         cutoff = datetime.now(UTC) + timedelta(minutes=reminder_window_minutes)
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -312,6 +384,5 @@ class ApprovalStepRepository(BaseRepository):
             .not_.is_("due_date", "null")
             .lte("due_date", cutoff.isoformat())
             .order("due_date")
-            .execute()
         )
         return self._many(response)

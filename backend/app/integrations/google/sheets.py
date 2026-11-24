@@ -5,6 +5,8 @@ from googleapiclient.discovery import build
 from app.integrations.google.client import GoogleClient
 
 
+from app.core.db import execute
+
 class GoogleSheetsService:
     """
     Google Sheets API wrapper.
@@ -57,11 +59,10 @@ class GoogleSheetsService:
         }
 
         return (
-            sheets.spreadsheets()
+            (await execute(sheets.spreadsheets()
             .create(
                 body=spreadsheet,
-            )
-            .execute()
+            )))
         )
 
     # =====================================================
@@ -77,14 +78,13 @@ class GoogleSheetsService:
 
         sheets = await self.service()
 
-        result = (
+        result = await execute(
             sheets.spreadsheets()
             .values()
             .get(
                 spreadsheetId=spreadsheet_id,
                 range=cell_range,
             )
-            .execute()
         )
 
         return result.get(
@@ -111,15 +111,14 @@ class GoogleSheetsService:
         }
 
         return (
-            sheets.spreadsheets()
+            (await execute(sheets.spreadsheets()
             .values()
             .update(
                 spreadsheetId=spreadsheet_id,
                 range=cell_range,
                 valueInputOption="USER_ENTERED",
                 body=body,
-            )
-            .execute()
+            )))
         )
 
     async def append_rows(
@@ -137,7 +136,7 @@ class GoogleSheetsService:
         }
 
         return (
-            sheets.spreadsheets()
+            (await execute(sheets.spreadsheets()
             .values()
             .append(
                 spreadsheetId=spreadsheet_id,
@@ -145,8 +144,7 @@ class GoogleSheetsService:
                 valueInputOption="USER_ENTERED",
                 insertDataOption="INSERT_ROWS",
                 body=body,
-            )
-            .execute()
+            )))
         )
 
     # =====================================================
@@ -163,12 +161,11 @@ class GoogleSheetsService:
         sheets = await self.service()
 
         return (
-            sheets.spreadsheets()
+            (await execute(sheets.spreadsheets()
             .values()
             .clear(
                 spreadsheetId=spreadsheet_id,
                 range=cell_range,
                 body={},
-            )
-            .execute()
+            )))
         )

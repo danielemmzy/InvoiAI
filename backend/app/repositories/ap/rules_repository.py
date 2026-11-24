@@ -10,6 +10,7 @@ from typing import Any
 from uuid import UUID
 
 from app.core.supabase import get_supabase
+from app.core.db import execute
 
 
 class ApprovalRuleRepository:
@@ -38,11 +39,10 @@ class ApprovalRuleRepository:
         if active_only:
             query = query.eq("is_active", True)
 
-        response = (
+        response = await execute(
             query
             .order("priority", desc=False)
             .order("created_at", desc=False)
-            .execute()
         )
 
         return response.data or []
@@ -52,14 +52,13 @@ class ApprovalRuleRepository:
         org_id: UUID,
         rule_id: UUID,
     ) -> dict[str, Any] | None:
-        response = (
+        response = await execute(
             self.supabase
             .table(self.TABLE)
             .select("*")
             .eq("org_id", str(org_id))
             .eq("id", str(rule_id))
             .limit(1)
-            .execute()
         )
 
         rows = response.data or []
@@ -74,11 +73,10 @@ class ApprovalRuleRepository:
         payload = dict(data)
         payload["org_id"] = str(org_id)
 
-        response = (
+        response = await execute(
             self.supabase
             .table(self.TABLE)
             .insert(payload)
-            .execute()
         )
 
         rows = response.data or []
@@ -102,13 +100,12 @@ class ApprovalRuleRepository:
             if value is not None
         }
 
-        response = (
+        response = await execute(
             self.supabase
             .table(self.TABLE)
             .update(payload)
             .eq("org_id", str(org_id))
             .eq("id", str(rule_id))
-            .execute()
         )
 
         rows = response.data or []
@@ -120,13 +117,12 @@ class ApprovalRuleRepository:
         org_id: UUID,
         rule_id: UUID,
     ) -> bool:
-        response = (
+        response = await execute(
             self.supabase
             .table(self.TABLE)
             .delete()
             .eq("org_id", str(org_id))
             .eq("id", str(rule_id))
-            .execute()
         )
 
         return bool(response.data)
@@ -137,13 +133,12 @@ class ApprovalRuleRepository:
         rule_id: UUID,
         is_active: bool,
     ) -> dict[str, Any] | None:
-        response = (
+        response = await execute(
             self.supabase
             .table(self.TABLE)
             .update({"is_active": is_active})
             .eq("org_id", str(org_id))
             .eq("id", str(rule_id))
-            .execute()
         )
 
         rows = response.data or []

@@ -69,7 +69,7 @@ class MatchingService:
                         **exception,
                     )
                 )
-                self._update_document(
+                await self._update_document(
                     org_id, document_id,
                     match_status=APMatchStatus.EXCEPTION.value,
                     two_way_match_passed=False,
@@ -77,7 +77,7 @@ class MatchingService:
                     match_exception_count=1,
                 )
                 return MatchResult(APMatchStatus.EXCEPTION, False, [exception])
-            self._update_document(
+            await self._update_document(
                 org_id, document_id,
                 match_status=APMatchStatus.NOT_REQUIRED.value,
                 two_way_match_passed=True,
@@ -86,7 +86,7 @@ class MatchingService:
             )
             return MatchResult(APMatchStatus.NOT_REQUIRED, True)
 
-        tol = self._get_tolerance(org_id, document, purchase_order)
+        tol = await self._get_tolerance(org_id, document, purchase_order)
         exceptions: list[dict] = []
 
         # Header controls.
@@ -195,17 +195,23 @@ class MatchingService:
                     "confirmed receipt", "none", "warning",
                 ))
 
-        for data in exceptions:
-            await self.exceptions.upsert_open(
-                __import__("app.models.domain.ap", fromlist=["InvoiceException"])
-                .InvoiceException(
-                    id=uuid4(),
-                    org_id=org_id,
-                    document_id=document_id,
-                    created_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc),
-                    **data,
-                )
+        if exceptions:
+            InvoiceException = __import__(
+                "app.models.domain.ap", fromlist=["InvoiceException"]
+            ).InvoiceException
+            # One batched upsert instead of a SELECT+write per finding.
+            await self.exceptions.upsert_open_many(
+                [
+                    InvoiceException(
+                        id=uuid4(),
+                        org_id=org_id,
+                        document_id=document_id,
+                        created_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc),
+                        **data,
+                    )
+                    for data in exceptions
+                ]
             )
 
         two_way_failed = any(
@@ -218,7 +224,7 @@ class MatchingService:
             for e in exceptions
         )
         status = APMatchStatus.EXCEPTION if exceptions else APMatchStatus.MATCHED
-        self._update_document(
+        await self._update_document(
             org_id, document_id,
             match_status=status.value,
             two_way_match_passed=not two_way_failed,
@@ -227,10 +233,10 @@ class MatchingService:
         )
         return MatchResult(status, not exceptions, exceptions, line_meta)
 
-    def _get_tolerance(self, org_id: UUID, document: dict, po: dict) -> dict:
+    async def _get_tolerance(self, org_id: UUID, document: dict, po: dict) -> dict:
         # Most specific scope wins: vendor -> document type -> org.
         q = self.db.table("matching_tolerances").select("*").eq("org_id", str(org_id))
-        rows = q.execute().data or []
+        rows = (await execute(q)).data or []
         vendor = str(document.get("vendor_id") or po.get("vendor_id") or "")
         dtype = str(document.get("document_type") or "invoice")
         candidates = []
@@ -356,10 +362,12 @@ class MatchingService:
         except (InvalidOperation, ValueError, TypeError):
             return default
 
-    def _update_document(self, org_id, document_id, **values):
-        self.db.table("documents").update(values).eq(
-            "id", str(document_id)
-        ).eq("org_id", str(org_id)).execute()
+    async def _update_document(self, org_id, document_id, **values):
+        await execute(
+            self.db.table("documents").update(values).eq(
+                "id", str(document_id)
+            ).eq("org_id", str(org_id))
+        )
 
     @staticmethod
     def _exc(kind, title, expected, actual, severity, variance=None):

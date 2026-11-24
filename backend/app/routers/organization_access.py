@@ -12,6 +12,8 @@ from app.core.container import get_container
 
 router = APIRouter(prefix="/organization-access", tags=["Organization Access & Approval Authority"])
 
+from app.core.db import execute
+
 class AuthorityRequest(BaseModel):
     membership_id: UUID
     approval_type: str = Field(pattern="^(invoice|payment)$")
@@ -44,12 +46,12 @@ def _require(ctx: OrganizationContext, permission: str):
 @router.get("/authorities")
 async def list_authorities(ctx: OrganizationContext = Depends(get_org_context)):
     _require(ctx, MANAGE_APPROVAL_AUTHORITY)
-    return get_supabase().table("approval_authorities").select("*").eq("org_id", str(ctx.org_id)).eq("is_active", True).order("limit_amount").execute().data or []
+    return (await execute(get_supabase().table("approval_authorities").select("*").eq("org_id", str(ctx.org_id)).eq("is_active", True).order("limit_amount"))).data or []
 
 @router.put("/authorities")
 async def upsert_authority(payload: AuthorityRequest, ctx: OrganizationContext = Depends(get_org_context)):
     _require(ctx, MANAGE_APPROVAL_AUTHORITY)
-    member = get_supabase().table("org_members").select("id").eq("org_id", str(ctx.org_id)).eq("id", str(payload.membership_id)).limit(1).execute().data or []
+    member = (await execute(get_supabase().table("org_members").select("id").eq("org_id", str(ctx.org_id)).eq("id", str(payload.membership_id)).limit(1))).data or []
     if not member: raise HTTPException(status_code=404, detail="Membership not found")
     data = payload.model_dump(mode="json")
     data["currency"] = data["currency"].upper()
@@ -66,7 +68,7 @@ async def create_delegation(payload: DelegationRequest, ctx: OrganizationContext
     _require(ctx, MANAGE_DELEGATIONS)
     if payload.starts_at >= payload.ends_at: raise HTTPException(status_code=400, detail="ends_at must be after starts_at")
     db = get_supabase()
-    members = db.table("org_members").select("id").eq("org_id", str(ctx.org_id)).in_("id", [str(payload.delegator_membership_id), str(payload.delegatee_membership_id)]).execute().data or []
+    members = (await execute(db.table("org_members").select("id").eq("org_id", str(ctx.org_id)).in_("id", [str(payload.delegator_membership_id), str(payload.delegatee_membership_id)]))).data or []
     if len(members) != 2: raise HTTPException(status_code=404, detail="Both memberships must belong to this organization")
     if payload.delegator_membership_id == payload.delegatee_membership_id: raise HTTPException(status_code=400, detail="A member cannot delegate to themselves")
     result = await get_container().approval_authority_service.delegations.create(ctx.org_id, {**payload.model_dump(mode="json"), "created_by": str(UUID(ctx.user_id))})
@@ -89,17 +91,17 @@ async def revoke_delegation(delegation_id: UUID, ctx: OrganizationContext = Depe
 @router.get("/roles")
 async def list_roles(ctx: OrganizationContext = Depends(get_org_context)):
     _require(ctx, MANAGE_ROLES)
-    return get_supabase().table("organization_roles").select("*").eq("org_id", str(ctx.org_id)).eq("is_active", True).order("is_system", desc=True).order("name").execute().data or []
+    return (await execute(get_supabase().table("organization_roles").select("*").eq("org_id", str(ctx.org_id)).eq("is_active", True).order("is_system", desc=True).order("name"))).data or []
 
 @router.post("/roles", status_code=201)
 async def create_role(payload: RoleRequest, ctx: OrganizationContext = Depends(get_org_context)):
     _require(ctx, MANAGE_ROLES)
     db = get_supabase()
-    existing = db.table("organization_roles").select("id").eq("org_id", str(ctx.org_id)).eq("role_key", payload.role_key).limit(1).execute().data or []
+    existing = (await execute(db.table("organization_roles").select("id").eq("org_id", str(ctx.org_id)).eq("role_key", payload.role_key).limit(1))).data or []
     if existing: raise HTTPException(status_code=409, detail="Role key already exists")
-    return db.table("organization_roles").insert({**payload.model_dump(), "org_id": str(ctx.org_id), "is_system": False}).execute().data[0]
+    return (await execute(db.table("organization_roles").insert({**payload.model_dump(), "org_id": str(ctx.org_id), "is_system": False}))).data[0]
 
 @router.get("/sod-rules")
 async def list_sod_rules(ctx: OrganizationContext = Depends(get_org_context)):
     _require(ctx, MANAGE_SOD)
-    return get_supabase().table("sod_rules").select("*").eq("org_id", str(ctx.org_id)).order("rule_key").execute().data or []
+    return (await execute(get_supabase().table("sod_rules").select("*").eq("org_id", str(ctx.org_id)).order("rule_key"))).data or []

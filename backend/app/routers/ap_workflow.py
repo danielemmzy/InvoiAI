@@ -60,6 +60,8 @@ router = APIRouter(
 # Schemas
 # ============================================================
 
+from app.core.db import execute
+
 class ApprovalRuleCreate(BaseModel):
     name: str
     description: str | None = None
@@ -348,9 +350,9 @@ async def override_payment_block(
 
     release_status = "not_started"
     instructions = PaymentInstructionService()
-    rows = instructions.repository.db.table("payment_instructions").select("id,status").eq(
+    rows = (await execute(instructions.repository.db.table("payment_instructions").select("id,status").eq(
         "org_id", str(ctx.org_id)
-    ).eq("document_id", str(document_id)).order("created_at", desc=True).limit(1).execute().data
+    ).eq("document_id", str(document_id)).order("created_at", desc=True).limit(1))).data
     if rows and rows[0]["status"] == PaymentInstructionStatus.BLOCKED.value:
         instruction_id = UUID(rows[0]["id"])
         try:
@@ -612,8 +614,8 @@ async def create_bill_for_document(
     from app.core.supabase import get_supabase
     from app.workers.bill_sync_worker import BillSyncWorker
     db = get_supabase()
-    rows = db.table("documents").select("id,org_id,ap_enabled,ap_status,erp_bill_id").eq(
-        "id", str(document_id)).eq("org_id", str(ctx.org_id)).limit(1).execute().data or []
+    rows = (await execute(db.table("documents").select("id,org_id,ap_enabled,ap_status,erp_bill_id").eq(
+        "id", str(document_id)).eq("org_id", str(ctx.org_id)).limit(1))).data or []
     if not rows:
         raise HTTPException(status_code=404, detail="Invoice not found.")
     doc = rows[0]
@@ -627,8 +629,8 @@ async def create_bill_for_document(
         await BillSyncWorker(db=db).execute(document_id=document_id)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"ERP bill sync failed: {str(exc)[:300]}") from exc
-    refreshed = db.table("documents").select("ap_status,erp_bill_id,erp_sync_error").eq(
-        "id", str(document_id)).eq("org_id", str(ctx.org_id)).single().execute().data
+    refreshed = (await execute(db.table("documents").select("ap_status,erp_bill_id,erp_sync_error").eq(
+        "id", str(document_id)).eq("org_id", str(ctx.org_id)).single())).data
     if not refreshed.get("erp_bill_id"):
         raise HTTPException(status_code=502, detail=refreshed.get("erp_sync_error") or "ERP did not confirm bill creation.")
     return {"status":refreshed.get("ap_status"), "document_id":str(document_id), "erp_bill_id":refreshed["erp_bill_id"], "payment_released":False}
@@ -658,7 +660,7 @@ async def list_accounting_tax_mappings(
         "id,provider,source_tax_rate,source_tax_code,external_tax_code_id,external_tax_code_name,is_active,created_at,updated_at"
     ).eq("org_id", str(ctx.org_id)).order("source_tax_rate")
     if provider: query = query.eq("provider", provider)
-    return query.execute().data or []
+    return (await execute(query)).data or []
 
 
 @router.post("/accounting-tax-mappings", status_code=201)
@@ -679,9 +681,9 @@ async def create_accounting_tax_mapping(
         "external_tax_code_name": payload.external_tax_code_name, "created_by": str(user.id), "is_active": True,
     }
     try:
-        rows = db.table("accounting_tax_code_mappings").upsert(
+        rows = (await execute(db.table("accounting_tax_code_mappings").upsert(
             data, on_conflict="org_id,provider,source_tax_rate,source_tax_code"
-        ).execute().data or []
+        ))).data or []
     except Exception as exc:
         raise HTTPException(status_code=409, detail="Could not save mapping. Confirm the tax-mapping migration is applied and there is no conflicting mapping.") from exc
     return rows[0] if rows else {"saved": True, "provider": payload.provider, "source_tax_rate": str(payload.source_tax_rate)}
@@ -694,7 +696,7 @@ async def deactivate_accounting_tax_mapping(
     _: None = Depends(require_permission(MANAGE_AP_RULES)),
 ):
     from app.core.supabase import get_supabase
-    rows = get_supabase().table("accounting_tax_code_mappings").update({"is_active": False}).eq(
-        "id", str(mapping_id)).eq("org_id", str(ctx.org_id)).execute().data or []
+    rows = (await execute(get_supabase().table("accounting_tax_code_mappings").update({"is_active": False}).eq(
+        "id", str(mapping_id)).eq("org_id", str(ctx.org_id)))).data or []
     if not rows:
         raise HTTPException(status_code=404, detail="Tax mapping not found.")

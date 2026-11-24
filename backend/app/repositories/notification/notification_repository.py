@@ -12,6 +12,7 @@ from app.models.domain.notification_preference import (
     NotificationPreference,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class NotificationRepository(BaseRepository):
@@ -77,7 +78,7 @@ class NotificationRepository(BaseRepository):
         offset: int = 0,
     ) -> list[Notification]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -92,7 +93,6 @@ class NotificationRepository(BaseRepository):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(
@@ -105,7 +105,7 @@ class NotificationRepository(BaseRepository):
         user_id: UUID,
     ) -> list[Notification]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -120,7 +120,6 @@ class NotificationRepository(BaseRepository):
                 "created_at",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(
@@ -133,7 +132,7 @@ class NotificationRepository(BaseRepository):
         user_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -147,7 +146,6 @@ class NotificationRepository(BaseRepository):
                 "is_read",
                 False,
             )
-            .execute()
         )
 
         return response.count or 0
@@ -186,7 +184,7 @@ class NotificationRepository(BaseRepository):
         user_id: UUID,
     ) -> bool:
 
-        (
+        await execute(
             self.table()
             .update(
                 {
@@ -201,7 +199,6 @@ class NotificationRepository(BaseRepository):
                 "is_read",
                 False,
             )
-            .execute()
         )
 
         return True
@@ -213,7 +210,7 @@ class NotificationRepository(BaseRepository):
         event_key: str,
     ) -> bool:
         """Return whether an in-app notification with the given idempotency key exists."""
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("user_id", str(user_id))
@@ -223,7 +220,6 @@ class NotificationRepository(BaseRepository):
                 {"finance_event_key": event_key},
             )
             .limit(1)
-            .execute()
         )
         return bool(response.data)
 
@@ -237,7 +233,7 @@ class NotificationRepository(BaseRepository):
         user_id: UUID,
     ) -> NotificationPreference | None:
 
-        response = (
+        response = await execute(
             self.db.table(
                 "notification_preferences",
             )
@@ -247,7 +243,6 @@ class NotificationRepository(BaseRepository):
                 str(user_id),
             )
             .limit(1)
-            .execute()
         )
 
         row = self.raw(
@@ -277,7 +272,7 @@ class NotificationRepository(BaseRepository):
 
         if existing:
 
-            response = (
+            response = await execute(
                 self.db.table(
                     "notification_preferences",
                 )
@@ -292,12 +287,11 @@ class NotificationRepository(BaseRepository):
                         preference["user_id"],
                     ),
                 )
-                .execute()
             )
 
         else:
 
-            response = (
+            response = await execute(
                 self.db.table(
                     "notification_preferences",
                 )
@@ -306,7 +300,6 @@ class NotificationRepository(BaseRepository):
                         preference,
                     )
                 )
-                .execute()
             )
 
         row = self.raw(

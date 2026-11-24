@@ -21,6 +21,7 @@ from app.models.domain.organization import (
     OrganizationSettings,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class OrganizationSettingsRepository(
@@ -50,7 +51,7 @@ class OrganizationSettingsRepository(
         org_id: UUID,
     ) -> OrganizationSettings | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -58,7 +59,6 @@ class OrganizationSettingsRepository(
                 str(org_id),
             )
             .limit(1)
-            .execute()
         )
 
         rows = response.data or []
@@ -74,7 +74,7 @@ class OrganizationSettingsRepository(
 
         if row.get("sso_config") is None:
 
-            self.table().update(
+            await execute(self.table().update(
                 {
                     "sso_config": {},
                     "updated_at": (
@@ -86,7 +86,7 @@ class OrganizationSettingsRepository(
             ).eq(
                 "org_id",
                 str(org_id),
-            ).execute()
+            ))
 
             row["sso_config"] = {}
 
@@ -115,14 +115,13 @@ class OrganizationSettingsRepository(
                 ).isoformat()
             )
 
-        response = (
+        response = await execute(
             self.table()
             .update(data)
             .eq(
                 "org_id",
                 str(org_id),
             )
-            .execute()
         )
 
         rows = response.data or []
@@ -144,14 +143,13 @@ class OrganizationSettingsRepository(
         org_id: UUID,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.table()
             .delete()
             .eq(
                 "org_id",
                 str(org_id),
             )
-            .execute()
         )
 
         return bool(
@@ -163,7 +161,7 @@ class OrganizationSettingsRepository(
         org_id: UUID,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq(
@@ -171,7 +169,6 @@ class OrganizationSettingsRepository(
                 str(org_id),
             )
             .limit(1)
-            .execute()
         )
 
         return bool(

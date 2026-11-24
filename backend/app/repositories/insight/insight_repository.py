@@ -15,6 +15,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.mappers.insight_mapper import InsightMapper
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class InsightRepository(BaseRepository):
@@ -25,7 +26,7 @@ class InsightRepository(BaseRepository):
         if not rows:
             return []
 
-        response = self.table().insert(jsonable_encoder(rows)).execute()
+        response = await execute(self.table().insert(jsonable_encoder(rows)))
         return self._many(response)
 
     async def list_active_for_org(
@@ -36,7 +37,7 @@ class InsightRepository(BaseRepository):
     ):
         now = datetime.now(UTC).isoformat()
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -45,7 +46,6 @@ class InsightRepository(BaseRepository):
             .order("severity")
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
         return self._many(response)
 
@@ -56,12 +56,11 @@ class InsightRepository(BaseRepository):
         return await self.update(insight_id, {"is_read": True})
 
     async def list_critical_for_org(self, org_id: UUID):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("severity", "critical")
             .eq("is_dismissed", False)
-            .execute()
         )
         return self._many(response)

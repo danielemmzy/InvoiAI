@@ -23,6 +23,8 @@ from app.workers.base import BaseWorker
 logger = logging.getLogger(__name__)
 
 
+from app.core.db import execute
+
 class FinanceWorker(BaseWorker):
     """
     Scheduled personal-finance maintenance worker.
@@ -84,7 +86,7 @@ class FinanceWorker(BaseWorker):
 
     async def run_pending(self) -> dict[str, int]:
         """Scheduler-compatible entry point."""
-        return await self.execute()
+        return await execute(await self)
 
     async def _reset_monthly_budgets(self, today: date) -> int:
         if today.day != 1:

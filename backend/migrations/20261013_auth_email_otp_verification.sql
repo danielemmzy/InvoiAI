@@ -37,3 +37,31 @@ alter table public.auth_email_verifications enable row level security;
 
 comment on table public.auth_email_verifications is
     'Hashed, single-use six-digit email verification codes. Service-role access only; codes are never stored or logged in plaintext.';
+
+-- No client policy is intentional: only the service role may read or write
+-- verification codes. Make that explicit rather than relying on defaults.
+do $$
+begin
+    if exists (select 1 from pg_roles where rolname = 'anon') then
+        revoke all on public.auth_email_verifications from anon;
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'authenticated') then
+        revoke all on public.auth_email_verifications from authenticated;
+    end if;
+    if exists (select 1 from pg_roles where rolname = 'service_role') then
+        grant all on public.auth_email_verifications to service_role;
+    end if;
+end
+$$;
+
+-- PostgREST caches the schema and returns PGRST205 for this table until it is
+-- told to reload. The reload must happen *after* the transaction that creates
+-- the table has committed, so the listener can see the new table. The commit
+-- below ends the migration transaction explicitly; run this file with
+-- autocommit (plain psql / Supabase SQL editor), which makes the trailing
+-- NOTIFY its own statement. If a migration runner wraps the file, the
+-- trailing STATEMENTS after COMMIT still execute as the next implicit
+-- transaction, which commits before PostgREST handles the notification.
+commit;
+
+notify pgrst, 'reload schema';

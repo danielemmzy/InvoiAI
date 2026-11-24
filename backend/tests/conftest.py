@@ -43,6 +43,7 @@ class _FakeQuery:
         self.operation = "select"
         self.payload = None
         self.filters = []
+        self.in_filters = []
         self._order = None
         self._limit = None
         self._single = False
@@ -65,6 +66,11 @@ class _FakeQuery:
         self.filters.append((column, value))
         return self
 
+    def in_(self, column, values):
+        """Mirror PostgREST's `column=in.(a,b,c)` batch filter."""
+        self.in_filters.append((column, {str(value) for value in values}))
+        return self
+
     def order(self, column, desc=False):
         self._order = (column, desc)
         return self
@@ -78,7 +84,12 @@ class _FakeQuery:
         return self
 
     def _matches(self, row):
-        return all(str(row.get(column)) == str(value) for column, value in self.filters)
+        if not all(str(row.get(column)) == str(value) for column, value in self.filters):
+            return False
+        return all(
+            str(row.get(column)) in allowed
+            for column, allowed in self.in_filters
+        )
 
     def execute(self):
         if self.operation == "insert":

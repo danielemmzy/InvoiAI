@@ -8,6 +8,8 @@ from googleapiclient.http import MediaIoBaseDownload
 from app.integrations.google.client import GoogleClient
 
 
+from app.core.db import execute
+
 class GoogleDriveService:
     """
     Google Drive API wrapper.
@@ -54,12 +56,11 @@ class GoogleDriveService:
         drive = await self.service()
 
         return (
-            drive.files()
+            (await execute(drive.files()
             .get(
                 fileId=file_id,
                 fields="*",
-            )
-            .execute()
+            )))
         )
 
     async def list_folder_files(
@@ -70,13 +71,12 @@ class GoogleDriveService:
 
         drive = await self.service()
 
-        response = (
+        response = await execute(
             drive.files()
             .list(
                 q=f"'{folder_id}' in parents and trashed=false",
                 fields="files(id,name,mimeType,size,modifiedTime)",
             )
-            .execute()
         )
 
         return response.get(
@@ -92,13 +92,12 @@ class GoogleDriveService:
 
         drive = await self.service()
 
-        response = (
+        response = await execute(
             drive.files()
             .list(
                 q=f"name contains '{query}' and trashed=false",
                 fields="files(id,name,mimeType)",
             )
-            .execute()
         )
 
         return response.get(
@@ -154,13 +153,12 @@ class GoogleDriveService:
         drive = await self.service()
 
         return (
-            drive.files()
+            (await execute(drive.files()
             .create(
                 body=metadata,
                 media_body=media,
                 fields="id,name",
-            )
-            .execute()
+            )))
         )
 
     async def delete_file(
@@ -171,12 +169,11 @@ class GoogleDriveService:
 
         drive = await self.service()
 
-        (
+        await execute(
             drive.files()
             .delete(
                 fileId=file_id,
             )
-            .execute()
         )
 
         return True

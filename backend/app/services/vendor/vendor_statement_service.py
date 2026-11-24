@@ -10,6 +10,8 @@ from app.repositories.ap.dashboard_repository import APDashboardRepository
 from app.services.fx.fx_service import FXService
 
 
+from app.core.db import execute
+
 class VendorStatementService:
     """Builds the tenant-scoped vendor statement read model used by the UI."""
 
@@ -20,9 +22,9 @@ class VendorStatementService:
 
     async def get(self, org_id: UUID, vendor_id: UUID) -> dict:
         vendor_rows = (
-            self.db.table("vendors")
+            (await execute(self.db.table("vendors")
             .select("id,name,risk_score,risk_level,fraud_flags,currencies_used,typical_currency")
-            .eq("org_id", str(org_id)).eq("id", str(vendor_id)).limit(1).execute().data or []
+            .eq("org_id", str(org_id)).eq("id", str(vendor_id)).limit(1))).data or []
         )
         if not vendor_rows:
             raise ValueError("Vendor not found.")
@@ -30,10 +32,10 @@ class VendorStatementService:
 
         invoices = self.dashboard.list_invoice_projection(org_id, vendor_id=vendor_id) or []
         payments = (
-            self.db.table("payments")
+            (await execute(self.db.table("payments")
             .select("id,payment_number,amount,currency,payment_date,status,document_id")
             .eq("org_id", str(org_id)).eq("vendor_id", str(vendor_id))
-            .order("payment_date", desc=True).limit(500).execute().data or []
+            .order("payment_date", desc=True).limit(500))).data or []
         )
 
         reporting_currency = str(

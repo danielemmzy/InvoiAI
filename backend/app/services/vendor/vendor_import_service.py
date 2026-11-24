@@ -7,6 +7,8 @@ from app.core.enum.database import IntegrationProvider
 from app.services.ap.provider.accounting_provider import NoActiveAccountingProviderError
 
 
+from app.core.db import execute
+
 class VendorImportService:
     """Dispatch supplier imports through the explicitly selected connection."""
 
@@ -20,9 +22,9 @@ class VendorImportService:
 
     async def _resolve_provider(self, *, org_id: UUID, provider: str, db):
         rows = (
-            db.table("integration_connections").select("*")
+            (await execute(db.table("integration_connections").select("*")
             .eq("org_id", str(org_id)).eq("provider", provider)
-            .eq("is_active", True).limit(1).execute().data
+            .eq("is_active", True).limit(1))).data
         )
         if not rows:
             raise NoActiveAccountingProviderError(
@@ -57,9 +59,9 @@ class VendorImportService:
             raise ValueError("Resolved accounting provider does not match the requested provider.")
         result = await adapter.sync()
         rows = (
-            self.db.table("integration_connections").select("id,metadata")
+            (await execute(self.db.table("integration_connections").select("id,metadata")
             .eq("org_id", str(org_id)).eq("provider", provider)
-            .eq("is_active", True).limit(1).execute().data
+            .eq("is_active", True).limit(1))).data
         )
         if rows:
             connection = rows[0]
@@ -71,8 +73,8 @@ class VendorImportService:
                 "errors": result.get("errors", []),
                 "completed_at": completed_at,
             }
-            self.db.table("integration_connections").update({"metadata": metadata}).eq(
+            (await execute(self.db.table("integration_connections").update({"metadata": metadata}).eq(
                 "org_id", str(org_id)
-            ).eq("id", str(connection["id"])).execute()
+            ).eq("id", str(connection["id"]))))
             result["completed_at"] = completed_at
         return result

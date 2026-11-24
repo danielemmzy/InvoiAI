@@ -14,6 +14,7 @@ from app.models.domain.notification_delivery import (
     NotificationDelivery,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class NotificationDeliveryRepository(BaseRepository):
@@ -84,7 +85,7 @@ class NotificationDeliveryRepository(BaseRepository):
         notification_id: UUID,
     ) -> list[NotificationDelivery]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -99,7 +100,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 "id",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -116,7 +116,7 @@ class NotificationDeliveryRepository(BaseRepository):
         offset: int = 0,
     ) -> list[NotificationDelivery]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -135,7 +135,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -152,7 +151,7 @@ class NotificationDeliveryRepository(BaseRepository):
         offset: int = 0,
     ) -> list[NotificationDelivery]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -171,7 +170,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -186,7 +184,7 @@ class NotificationDeliveryRepository(BaseRepository):
         limit: int = 100,
     ) -> list[NotificationDelivery]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .in_(
@@ -207,7 +205,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 "id",
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -351,7 +348,7 @@ class NotificationDeliveryRepository(BaseRepository):
         provider_message_id: str,
     ) -> NotificationDelivery | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -363,7 +360,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 provider_message_id,
             )
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -375,7 +371,7 @@ class NotificationDeliveryRepository(BaseRepository):
         channel: NotificationChannel,
     ) -> NotificationDelivery | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -387,7 +383,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 channel.value,
             )
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -404,13 +399,13 @@ class NotificationDeliveryRepository(BaseRepository):
     ) -> int:
         """Atomically recover abandoned PROCESSING deliveries."""
 
-        response = self.db.rpc(
+        response = await execute(self.db.rpc(
             "recover_stale_notification_deliveries",
             {
                 "p_timeout_seconds": timeout_seconds,
                 "p_limit": limit,
             },
-        ).execute()
+        ))
         return int(response.data or 0)
 
     # =========================================================
@@ -422,7 +417,7 @@ class NotificationDeliveryRepository(BaseRepository):
         notification_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -432,7 +427,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 "notification_id",
                 str(notification_id),
             )
-            .execute()
         )
 
         return response.count or 0
@@ -441,7 +435,7 @@ class NotificationDeliveryRepository(BaseRepository):
         self,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -454,7 +448,6 @@ class NotificationDeliveryRepository(BaseRepository):
                     NotificationDeliveryStatus.RETRYING.value,
                 ],
             )
-            .execute()
         )
 
         return response.count or 0
@@ -478,7 +471,7 @@ class NotificationDeliveryRepository(BaseRepository):
     idempotency_key: str,
 ) -> NotificationDelivery | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -486,7 +479,6 @@ class NotificationDeliveryRepository(BaseRepository):
                 idempotency_key,
             )
             .limit(1)
-            .execute()
         )
 
         return self._one(response)

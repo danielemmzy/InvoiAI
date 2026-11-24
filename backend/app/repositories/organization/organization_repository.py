@@ -26,6 +26,7 @@ from app.mappers.organization_mapper import OrganizationMapper
 from app.models.domain.organization import Organization
 from app.repositories.base import BaseRepository
 from app.core.plan import document_limit_for
+from app.core.db import execute
 
 
 class OrganizationRepository(BaseRepository):
@@ -54,12 +55,11 @@ class OrganizationRepository(BaseRepository):
         converting the database row into the Organization domain model.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("id", str(org_id))
             .limit(1)
-            .execute()
         )
 
         rows = getattr(response, "data", None) or []
@@ -73,7 +73,7 @@ class OrganizationRepository(BaseRepository):
         if row.get("document_limit") is None:
             limit = document_limit_for(PlanType.FREE)
 
-            self.table().update(
+            await execute(self.table().update(
                 {
                     "document_limit": limit,
                     "updated_at": datetime.now(UTC).isoformat(),
@@ -81,10 +81,49 @@ class OrganizationRepository(BaseRepository):
             ).eq(
                 "id",
                 str(org_id),
-            ).execute()
+            ))
 
             row["document_limit"] = limit
         return self.mapper.to_domain(row)
+
+    async def get_organizations_by_ids(
+        self,
+        org_ids: list[UUID],
+    ) -> dict[str, Organization]:
+        """Load several organizations in one query, keyed by id.
+
+        The workspace switcher used to call ``get_organization`` once per
+        membership, so a user in five workspaces paid five round trips just to
+        render the picker. Legacy rows with a NULL ``document_limit`` are
+        repaired in one grouped statement, as the single-row path does.
+        """
+
+        if not org_ids:
+            return {}
+
+        response = await execute(
+            self.table()
+            .select("*")
+            .in_("id", [str(org_id) for org_id in org_ids])
+        )
+
+        rows = [dict(row) for row in (response.data or [])]
+        missing_limit = [row for row in rows if row.get("document_limit") is None]
+        if missing_limit:
+            limit = document_limit_for(PlanType.FREE)
+            await execute(self.table().update(
+                {
+                    "document_limit": limit,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                }
+            ).in_("id", [str(row["id"]) for row in missing_limit]))
+            for row in missing_limit:
+                row["document_limit"] = limit
+
+        return {
+            str(row["id"]): self.mapper.to_domain(row)
+            for row in rows
+        }
 
     async def update_organization(
         self,
@@ -113,12 +152,11 @@ class OrganizationRepository(BaseRepository):
         slug: str,
     ) -> Organization | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("slug", slug)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -128,12 +166,11 @@ class OrganizationRepository(BaseRepository):
         customer_id: str,
     ) -> Organization | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("stripe_customer_id", customer_id)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -143,12 +180,11 @@ class OrganizationRepository(BaseRepository):
         plan: PlanType,
     ) -> list[Organization]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("plan", plan.value)
             .order("created_at", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -201,12 +237,11 @@ class OrganizationRepository(BaseRepository):
         slug: str,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("slug", slug)
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)
@@ -220,13 +255,12 @@ class OrganizationRepository(BaseRepository):
 
     async def organization_count(self) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
                 count="exact",
             )
-            .execute()
         )
 
         return response.count or 0
@@ -234,14 +268,13 @@ class OrganizationRepository(BaseRepository):
 
     async def active_organizations(self) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
                 count="exact",
             )
             .eq("is_active", True)
-            .execute()
         )
 
         return response.count or 0
@@ -249,10 +282,9 @@ class OrganizationRepository(BaseRepository):
 
     async def organizations_by_plan(self) -> dict[str, int]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("plan")
-            .execute()
         )
 
         plans = {
@@ -286,7 +318,7 @@ class OrganizationRepository(BaseRepository):
             .isoformat()
         )
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -296,7 +328,6 @@ class OrganizationRepository(BaseRepository):
                 "created_at",
                 start,
             )
-            .execute()
         )
 
         return response.count or 0
@@ -307,14 +338,13 @@ class OrganizationRepository(BaseRepository):
         org_id: UUID,
     ) -> dict:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "storage_used_mb,storage_limit_mb"
             )
             .eq("id", str(org_id))
             .single()
-            .execute()
         )
 
         if not response.data:
@@ -349,7 +379,7 @@ class OrganizationRepository(BaseRepository):
         org_id: UUID,
     ) -> dict:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 """
@@ -362,7 +392,6 @@ class OrganizationRepository(BaseRepository):
             )
             .eq("id", str(org_id))
             .single()
-            .execute()
         )
 
         if not response.data:
@@ -415,5 +444,5 @@ class OrganizationRepository(BaseRepository):
         }
     async def list_all_ids(self, *, limit: int = 1000) -> list[UUID]:
         """Return organization IDs for internal scheduler fan-out."""
-        response = self.table().select("id").order("created_at").limit(limit).execute()
+        response = await execute(self.table().select("id").order("created_at").limit(limit))
         return [UUID(str(row["id"])) for row in (response.data or [])]

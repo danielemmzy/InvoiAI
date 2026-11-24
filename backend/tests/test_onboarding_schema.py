@@ -57,17 +57,17 @@ async def test_onboarding_invite_preview_is_saved_without_sending_invites(monkey
     saved = {}
 
     class Drafts:
-        def get(self, requested_user_id):
+        async def get(self, requested_user_id):
             return None
 
-        def save(self, requested_user_id, *, step, data):
+        async def save(self, requested_user_id, *, step, data):
             saved.update(data)
             return {}
 
-        def claim_workspace_id(self, requested_user_id):
+        async def claim_workspace_id(self, requested_user_id):
             return workspace_id
 
-        def mark_completed(self, requested_user_id, requested_workspace_id):
+        async def mark_completed(self, requested_user_id, requested_workspace_id):
             assert requested_workspace_id == workspace_id
 
     service = OrganizationService.__new__(OrganizationService)
@@ -115,10 +115,10 @@ async def test_completed_onboarding_retry_returns_the_original_workspace(monkeyp
     )
 
     class Drafts:
-        def get(self, requested_user_id):
+        async def get(self, requested_user_id):
             return {"completed": True, "workspace_id": str(workspace_id)}
 
-        def claim_workspace_id(self, requested_user_id):
+        async def claim_workspace_id(self, requested_user_id):
             raise AssertionError("a completed onboarding must not claim another workspace")
 
     class Organizations:
@@ -233,6 +233,74 @@ async def test_retrying_reserved_workspace_does_not_duplicate_owner_membership(m
 
 
 @pytest.mark.asyncio
+async def test_failed_retry_does_not_delete_the_existing_workspace(monkeypatch):
+    """A repeated completion that fails must never roll back a workspace it
+    did not create: the reserved id already points at the organization."""
+    for key, value in {
+        "SECRET_KEY": "test-secret-key-for-unit-tests-only",
+        "SUPABASE_URL": "https://example.supabase.co",
+        "SUPABASE_ANON_KEY": "test-anon-key",
+        "SUPABASE_SERVICE_KEY": "test-service-key",
+        "STRIPE_SECRET_KEY": "sk_test_placeholder",
+        "STRIPE_WEBHOOK_SECRET": "whsec_placeholder",
+    }.items():
+        monkeypatch.setenv(key, value)
+    from fastapi import HTTPException
+    from app.core.enum.database import OrgRole
+    from app.services.organization_service import OrganizationService
+
+    user_id, workspace_id = uuid4(), uuid4()
+    organization = SimpleNamespace(
+        id=workspace_id, name="Northstar Studio", slug="northstar", created_by=user_id,
+        plan="free", currency="GBP", created_at=datetime.now(UTC),
+    )
+    membership = SimpleNamespace(id=uuid4(), role=OrgRole.OWNER, is_active=True)
+
+    class Organizations:
+        deleted = False
+
+        async def get_organization(self, requested_id):
+            return organization
+
+        async def delete_organization(self, requested_id):
+            self.deleted = True
+
+    class Members:
+        deleted = []
+
+        async def get_org_member(self, org_id, requested_user_id):
+            return membership
+
+        async def list_organization_members(self, org_id):
+            return [membership]
+
+        async def delete_membership(self, membership_id):
+            self.deleted.append(membership_id)
+
+    class Settings:
+        async def settings_exist(self, org_id):
+            return False
+
+        async def create_settings(self, payload):
+            raise RuntimeError("settings backend unavailable")
+
+    service = OrganizationService.__new__(OrganizationService)
+    service.organizations, service.members = Organizations(), Members()
+    service.settings = Settings()
+
+    with pytest.raises(HTTPException) as raised:
+        await service.create_workspace(
+            user=AuthUser(id=user_id, email="owner@example.test"),
+            workspace_type="business", name="Northstar Studio", currency="GBP",
+            country="GB", workspace_id=workspace_id,
+        )
+
+    assert raised.value.status_code == 500
+    assert service.organizations.deleted is False
+    assert service.members.deleted == []
+
+
+@pytest.mark.asyncio
 async def test_retry_does_not_promote_an_existing_non_owner_membership(monkeypatch):
     for key, value in {
         "SECRET_KEY": "test-secret-key-for-unit-tests-only",
@@ -278,7 +346,8 @@ async def test_retry_does_not_promote_an_existing_non_owner_membership(monkeypat
     assert service.members.updates == 0
 
 
-def test_draft_repository_reads_only_the_authenticated_users_row(monkeypatch):
+@pytest.mark.asyncio
+async def test_draft_repository_reads_only_the_authenticated_users_row(monkeypatch):
     for key, value in {
         "SECRET_KEY": "test-secret-key-for-unit-tests-only",
         "SUPABASE_URL": "https://example.supabase.co",
@@ -319,5 +388,5 @@ def test_draft_repository_reads_only_the_authenticated_users_row(monkeypatch):
     repository = OnboardingDraftRepository.__new__(OnboardingDraftRepository)
     repository.db = Database()
 
-    assert repository.get(user_id) is None
+    assert await repository.get(user_id) is None
     assert ("user_id", str(user_id)) in repository.db.query.filters

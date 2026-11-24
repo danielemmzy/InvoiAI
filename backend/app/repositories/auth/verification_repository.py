@@ -12,6 +12,7 @@ from typing import Any
 from uuid import UUID
 
 from app.core.supabase import get_supabase
+from app.core.db import execute
 
 TABLE = "auth_email_verifications"
 
@@ -39,7 +40,7 @@ class EmailVerificationRepository:
         return self.db.table(TABLE)
 
     async def create(self, row: dict[str, Any]) -> dict[str, Any]:
-        response = self._table().insert(row).execute()
+        response = await execute(self._table().insert(row))
         data = response.data or []
         return data[0] if isinstance(data, list) else data
 
@@ -50,16 +51,15 @@ class EmailVerificationRepository:
         purpose: str = "email_verification",
     ) -> dict[str, Any] | None:
         rows = (
-            self._table()
-            .select("*")
-            .eq("email", email.strip().lower())
-            .eq("purpose", purpose)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
+            await execute(
+                self._table()
+                .select("*")
+                .eq("email", email.strip().lower())
+                .eq("purpose", purpose)
+                .order("created_at", desc=True)
+                .limit(1)
+            )
+        ).data or []
         return rows[0] if rows else None
 
     async def recent_for_email(
@@ -70,31 +70,29 @@ class EmailVerificationRepository:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         return (
-            self._table()
-            .select("created_at")
-            .eq("email", email.strip().lower())
-            .eq("purpose", purpose)
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-            .data
-            or []
-        )
+            await execute(
+                self._table()
+                .select("created_at")
+                .eq("email", email.strip().lower())
+                .eq("purpose", purpose)
+                .order("created_at", desc=True)
+                .limit(limit)
+            )
+        ).data or []
 
     async def latest_for_user(
         self,
         user_id: UUID | str,
     ) -> dict[str, Any] | None:
         rows = (
-            self._table()
-            .select("*")
-            .eq("user_id", str(user_id))
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-            .data
-            or []
-        )
+            await execute(
+                self._table()
+                .select("*")
+                .eq("user_id", str(user_id))
+                .order("created_at", desc=True)
+                .limit(1)
+            )
+        ).data or []
         return rows[0] if rows else None
 
     def latest_status_for_user_sync(
@@ -127,14 +125,13 @@ class EmailVerificationRepository:
         email: str,
         purpose: str = "email_verification",
     ) -> None:
-        (
+        await execute(
             self._table()
             .update({"status": "expired", "updated_at": datetime.now(UTC).isoformat()})
             .eq("user_id", str(user_id))
             .eq("email", email.strip().lower())
             .eq("purpose", purpose)
             .eq("status", "pending")
-            .execute()
         )
 
     async def update(
@@ -144,13 +141,12 @@ class EmailVerificationRepository:
     ) -> dict[str, Any] | None:
         values = {**values, "updated_at": datetime.now(UTC).isoformat()}
         rows = (
-            self._table()
-            .update(values)
-            .eq("id", str(challenge_id))
-            .execute()
-            .data
-            or []
-        )
+            await execute(
+                self._table()
+                .update(values)
+                .eq("id", str(challenge_id))
+            )
+        ).data or []
         return rows[0] if rows else None
 
     async def mark_verified(self, challenge_id: UUID | str) -> None:

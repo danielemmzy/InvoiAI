@@ -99,7 +99,7 @@ class FXService:
         results: dict[tuple[str, str], Decimal] = {}
 
         async def ensure(base: str) -> tuple[str, list[dict]]:
-            cached = self.repository.get_rates(
+            cached = await self.repository.get_rates(
                 base_currency=base,
                 quote_currency=quote,
                 date_from=date_from,
@@ -115,7 +115,7 @@ class FXService:
                 raise FXRateUnavailable(
                     f"Unable to load FX rates for {base}/{quote}."
                 ) from exc
-            self.repository.upsert_rates(fetched)
+            await self.repository.upsert_rates(fetched)
             return base, fetched
 
         pairs = await asyncio.gather(*(ensure(base) for base in bases))

@@ -39,13 +39,16 @@ class SubscriptionAnalyzer:
         total_monthly = 0.0
         now = datetime.now(UTC).date()
 
+        # One query for all vendors' recent documents instead of one per vendor.
+        recent_by_vendor = await self.documents.latest_documents_by_vendor(
+            org_id, [vendor.id for vendor in vendors], per_vendor=3
+        )
+
         for vendor in vendors:
             if (vendor.total_document_count or 0) < MIN_OCCURRENCES_FOR_RECURRING:
                 continue
 
-            recent_docs = await self.documents.list_vendor_documents(
-                org_id, vendor.id, limit=3
-            )
+            recent_docs = recent_by_vendor.get(str(vendor.id), [])
             if len(recent_docs) < MIN_OCCURRENCES_FOR_RECURRING:
                 continue
 

@@ -32,6 +32,8 @@ from app.services.member_seats import seats_available
 router = APIRouter(prefix="/members", tags=["Members"])
 
 
+from app.core.db import execute
+
 class InviteMemberRequest(BaseModel):
     email: str
     role: OrgRole = OrgRole.MEMBER
@@ -229,7 +231,7 @@ async def change_member_access_role(
     actor = await service.members.get_org_member(ctx.org_id, user.id)
     if actor is None or member.org_id != ctx.org_id:
         raise HTTPException(status_code=404, detail="Member not found")
-    profile = get_container().db.table("organization_roles").select("id,role_key,name,permissions,is_system").eq("org_id", str(ctx.org_id)).eq("id", str(role_id)).limit(1).execute().data or []
+    profile = (await execute(get_container().db.table("organization_roles").select("id,role_key,name,permissions,is_system").eq("org_id", str(ctx.org_id)).eq("id", str(role_id)).limit(1))).data or []
     if not profile:
         raise HTTPException(status_code=404, detail="Access role not found")
     role = profile[0]

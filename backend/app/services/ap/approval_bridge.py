@@ -18,6 +18,8 @@ from app.services.ap.routing_engine import APRoutingEngine
 from app.workers.bill_sync_worker import BillSyncWorker
 
 
+from app.core.db import execute
+
 def document_routing_dimensions(
     doc: dict,
 ) -> tuple[str | None, str | None, str | None]:
@@ -76,22 +78,20 @@ class APApprovalBridge:
 
     async def create_workflow(self, *, org_id: UUID, document_id: UUID, analysis_id: UUID, initiated_by: UUID | None):
         # Idempotency: never create a second workflow for the same document.
-        existing = (
+        existing = await execute(
             self.db.table("approval_workflows")
             .select("id")
             .eq("org_id", str(org_id))
             .eq("document_id", str(document_id))
             .limit(1)
-            .execute()
         )
         if existing.data:
             workflow_id = existing.data[0]["id"]
             has_step = (
-                self.db.table("approval_steps")
+                (await execute(self.db.table("approval_steps")
                 .select("id")
                 .eq("workflow_id", str(workflow_id))
-                .limit(1)
-                .execute()
+                .limit(1)))
                 .data
             )
             if has_step:
@@ -100,14 +100,14 @@ class APApprovalBridge:
             # A workflow with no steps is an interrupted creation (the
             # workflow row is inserted before its steps). Remove the partial
             # record so this submission can create a complete workflow.
-            self.db.table("approval_workflows").delete().eq(
+            await execute(self.db.table("approval_workflows").delete().eq(
                 "id", str(workflow_id)
-            ).execute()
+            ))
 
-        doc = self.db.table("documents").select(
+        doc = (await execute(self.db.table("documents").select(
             "total_amount,document_type,vendor_name,vendor_id,external_source_data,capture_overrides"
-        ).eq("org_id", str(org_id)).eq("id", str(document_id)).single().execute().data
-        analysis = self.db.table("document_analyses").select("risk_level").eq("org_id", str(org_id)).eq("id", str(analysis_id)).single().execute().data
+        ).eq("org_id", str(org_id)).eq("id", str(document_id)).single())).data
+        analysis = (await execute(self.db.table("document_analyses").select("risk_level").eq("org_id", str(org_id)).eq("id", str(analysis_id)).single())).data
 
         amount = Decimal(str(doc.get("total_amount") or 0))
         risk_level = analysis.get("risk_level") or RiskLevel.MEDIUM.value
@@ -117,13 +117,13 @@ class APApprovalBridge:
         requires_po = None
         extra_context: dict = {}
         if vendor_id:
-            vendor_row = self.db.table("vendors").select("po_required,is_verified,is_blocked").eq("org_id", str(org_id)).eq("id", str(vendor_id)).limit(1).execute().data
+            vendor_row = (await execute(self.db.table("vendors").select("po_required,is_verified,is_blocked").eq("org_id", str(org_id)).eq("id", str(vendor_id)).limit(1))).data
             if vendor_row:
                 requires_po = bool(vendor_row[0]["po_required"])
                 extra_context["vendor_verified"] = bool(vendor_row[0].get("is_verified"))
                 extra_context["vendor_blocked"] = bool(vendor_row[0].get("is_blocked"))
 
-        open_exceptions = self.db.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).eq("status", "open").execute().data
+        open_exceptions = (await execute(self.db.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).eq("status", "open"))).data
         extra_context["exception_status"] = "open" if open_exceptions else "none"
 
         plan, execution_mode, auto_decision = await self.routing_engine.build_plan(
@@ -210,7 +210,7 @@ class APApprovalBridge:
 
         created = await self.engine.start_workflow(workflow=workflow, steps=steps)
 
-        self.db.table("documents").update({"status": "in_approval", "pipeline_stage": "approval", "ap_status": "awaiting_approval"}).eq("id", str(document_id)).eq("org_id", str(org_id)).execute()
+        await execute(self.db.table("documents").update({"status": "in_approval", "pipeline_stage": "approval", "ap_status": "awaiting_approval"}).eq("id", str(document_id)).eq("org_id", str(org_id)))
         return created.id
 
     async def _apply_auto_decision(self, *, org_id: UUID, document_id: UUID, auto_decision):
@@ -264,13 +264,13 @@ class APApprovalBridge:
         already updated the workflow's authoritative status. Does not
         recompute completion itself.
         """
-        workflow = self.db.table("approval_workflows").select("status,workflow_type").eq("id", str(workflow_id)).single().execute().data
+        workflow = (await execute(self.db.table("approval_workflows").select("status,workflow_type").eq("id", str(workflow_id)).single())).data
         if not workflow:
             return "unknown"
 
         if workflow.get("workflow_type") == "payment":
             from app.services.payment.payment_approval_service import PaymentApprovalService
-            org_row = self.db.table("approval_workflows").select("org_id").eq("id", str(workflow_id)).single().execute().data
+            org_row = (await execute(self.db.table("approval_workflows").select("org_id").eq("id", str(workflow_id)).single())).data
             org_id = UUID(org_row["org_id"]) if org_row else None
             if org_id is None:
                 return "unknown"
@@ -279,11 +279,11 @@ class APApprovalBridge:
         status = workflow.get("status")
 
         if status == "rejected":
-            self.db.table("documents").update({"status": "rejected", "ap_status": "rejected"}).eq("id", str(document_id)).execute()
+            await execute(self.db.table("documents").update({"status": "rejected", "ap_status": "rejected"}).eq("id", str(document_id)))
             return "rejected"
 
         if status == "approved":
-            self.db.table("documents").update({"status": "approved", "pipeline_stage": "complete", "ap_status": "approved"}).eq("id", str(document_id)).execute()
+            await execute(self.db.table("documents").update({"status": "approved", "pipeline_stage": "complete", "ap_status": "approved"}).eq("id", str(document_id)))
             # Approval is the explicit event that starts ERP bill sync.
             # There is intentionally no scheduler fallback for AP bill sync.
             await BillSyncWorker().execute(document_id=document_id)

@@ -16,6 +16,7 @@ from uuid import UUID
 from app.mappers.integration_mapper import IntegrationSyncMapper
 from app.models.domain.integration import IntegrationSync
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class IntegrationSyncRepository(BaseRepository):
@@ -69,7 +70,7 @@ class IntegrationSyncRepository(BaseRepository):
         limit: int = 50,
     ) -> list[IntegrationSync]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("connection_id", str(connection_id))
@@ -78,7 +79,6 @@ class IntegrationSyncRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -89,7 +89,7 @@ class IntegrationSyncRepository(BaseRepository):
         limit: int = 100,
     ) -> list[IntegrationSync]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -98,7 +98,6 @@ class IntegrationSyncRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -108,7 +107,7 @@ class IntegrationSyncRepository(BaseRepository):
         connection_id: UUID,
     ) -> IntegrationSync | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("connection_id", str(connection_id))
@@ -117,7 +116,6 @@ class IntegrationSyncRepository(BaseRepository):
                 desc=True,
             )
             .limit(1)
-            .execute()
         )
 
         return self._one(response)

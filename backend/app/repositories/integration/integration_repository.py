@@ -26,6 +26,7 @@ from app.models.domain.integration import (
     IntegrationSync,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 # ============================================================
@@ -81,13 +82,12 @@ class IntegrationConnectionRepository(BaseRepository):
         provider: IntegrationProvider,
     ) -> IntegrationConnection | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("provider", provider.value)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -97,12 +97,11 @@ class IntegrationConnectionRepository(BaseRepository):
         org_id: UUID,
     ) -> list[IntegrationConnection]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("created_at", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -112,13 +111,12 @@ class IntegrationConnectionRepository(BaseRepository):
         provider: IntegrationProvider,
     ) -> list[IntegrationConnection]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("provider", provider.value)
             .eq("is_active", True)
             .eq("sync_enabled", True)
-            .execute()
         )
 
         return self._many(response)
@@ -241,14 +239,13 @@ class IntegrationConnectionRepository(BaseRepository):
         provider: IntegrationProvider,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("org_id", str(org_id))
             .eq("provider", provider.value)
             .eq("is_active", True)
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)

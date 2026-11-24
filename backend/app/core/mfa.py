@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 
 from app.context import AuthUser, OrganizationContext
 from app.core.auth import get_current_user
+from app.core.db import run_db
 from app.core.enum.database import OrgRole
 from app.core.ocm import get_org_context
 from app.services.auth import mfa_service
@@ -19,7 +20,7 @@ async def require_fresh_mfa(
         return
     if is_recent_aal2(user.aal, user.mfa_verified_at):
         return
-    if mfa_service.has_recovery_step_up(user.id, user.session_id):
+    if await run_db(mfa_service.has_recovery_step_up, user.id, user.session_id):
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

@@ -27,6 +27,7 @@ from app.core.enum.database import OrgRole
 from app.mappers.organization_mapper import OrganizationMemberMapper
 from app.models.domain.organization import OrganizationMember
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class MemberRepository(BaseRepository):
@@ -77,13 +78,12 @@ class MemberRepository(BaseRepository):
         user_id: UUID,
     ) -> OrganizationMember | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("user_id", str(user_id))
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -93,12 +93,11 @@ class MemberRepository(BaseRepository):
         token: str,
     ) -> OrganizationMember | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("invite_token", token)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -108,12 +107,11 @@ class MemberRepository(BaseRepository):
         org_id: UUID,
     ) -> list[OrganizationMember]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("created_at")
-            .execute()
         )
 
         return self._many(response)
@@ -123,11 +121,10 @@ class MemberRepository(BaseRepository):
         user_id: UUID,
     ) -> list[OrganizationMember]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("user_id", str(user_id))
-            .execute()
         )
 
         return self._many(response)
@@ -138,12 +135,11 @@ class MemberRepository(BaseRepository):
         role: OrgRole,
     ) -> list[OrganizationMember]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("role", role.value)
-            .execute()
         )
 
         return self._many(response)
@@ -153,12 +149,11 @@ class MemberRepository(BaseRepository):
         org_id: UUID,
     ) -> list[OrganizationMember]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("is_active", True)
-            .execute()
         )
 
         return self._many(response)
@@ -187,32 +182,32 @@ class MemberRepository(BaseRepository):
         department: str | None, spending_limit, invited_by: UUID,
         invite_email: str, invite_token: str, expires_at: datetime,
     ) -> OrganizationMember | None:
-        response = self.db.rpc("create_org_member_invitation", {
+        response = await execute(self.db.rpc("create_org_member_invitation", {
             "p_org_id": str(org_id), "p_seat_limit": seat_limit,
             "p_role": role.value, "p_department": department,
             "p_spending_limit": spending_limit, "p_invited_by": str(invited_by),
             "p_invite_email": invite_email, "p_invite_token": invite_token,
             "p_expires_at": expires_at.isoformat(),
-        }).execute()
+        }))
         return self._one(response)
 
     async def accept_invitation_with_capacity(
         self, *, token: str, user_id: UUID, seat_limit: int | None,
     ) -> OrganizationMember | None:
-        response = self.db.rpc("accept_org_member_invitation", {
+        response = await execute(self.db.rpc("accept_org_member_invitation", {
             "p_invite_token": token, "p_user_id": str(user_id),
             "p_seat_limit": seat_limit,
-        }).execute()
+        }))
         return self._one(response)
 
     async def resend_invitation_with_capacity(
         self, *, membership_id: UUID, seat_limit: int | None,
         invite_token: str, expires_at: datetime,
     ) -> OrganizationMember | None:
-        response = self.db.rpc("resend_org_member_invitation", {
+        response = await execute(self.db.rpc("resend_org_member_invitation", {
             "p_membership_id": str(membership_id), "p_seat_limit": seat_limit,
             "p_invite_token": invite_token, "p_expires_at": expires_at.isoformat(),
-        }).execute()
+        }))
         return self._one(response)
 
     async def clear_invitation(
@@ -252,12 +247,11 @@ class MemberRepository(BaseRepository):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id", count="exact")
             .eq("org_id", str(org_id))
             .eq("is_active", True)
-            .execute()
         )
 
         return response.count or 0
@@ -267,11 +261,10 @@ class MemberRepository(BaseRepository):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id", count="exact")
             .eq("org_id", str(org_id))
-            .execute()
         )
 
         return response.count or 0
@@ -282,13 +275,12 @@ class MemberRepository(BaseRepository):
         role: OrgRole,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("org_id", str(org_id))
             .eq("role", role.value)
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)
@@ -401,13 +393,12 @@ class MemberRepository(BaseRepository):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select("id", count="exact")
             .eq("org_id", str(org_id))
             .eq("role", OrgRole.OWNER.value)
             .eq("is_active", True)
-            .execute()
         )
 
         return response.count or 0
@@ -418,14 +409,13 @@ class MemberRepository(BaseRepository):
         org_id: UUID,
     ) -> OrganizationMember | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("role", OrgRole.OWNER.value)
             .eq("is_active", True)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)

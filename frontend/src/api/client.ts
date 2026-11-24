@@ -16,7 +16,11 @@ const IDEMPOTENT = new Set([
 export const client: AxiosInstance =
   axios.create({
     baseURL: BASE_URL,
-    timeout: 15_000,
+    // Auth and workspace requests fan out to Supabase through the BFF. A
+    // single Supabase round trip can take several seconds on a slow link, and
+    // login performs four sequentially, so a 15s ceiling aborted successful
+    // logins. Keep this above the backend's worst-case latency.
+    timeout: 45_000,
 
     // Browser -> Next.js is same-origin.
     // The only credential is the httpOnly BFF session cookie.

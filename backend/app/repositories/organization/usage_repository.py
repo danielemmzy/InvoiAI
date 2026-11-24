@@ -23,6 +23,7 @@ from uuid import UUID
 from app.mappers.organization_mapper import OrganizationUsageMapper
 from app.models.domain.organization import OrganizationUsage
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class UsageRepository(BaseRepository):
@@ -74,13 +75,12 @@ class UsageRepository(BaseRepository):
         org_id: UUID,
         month: date,
     ) -> OrganizationUsage | None:
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("month", month.isoformat())
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -90,13 +90,12 @@ class UsageRepository(BaseRepository):
         org_id: UUID,
         month: date,
     ) -> bool:
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("org_id", str(org_id))
             .eq("month", month.isoformat())
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)
@@ -109,12 +108,11 @@ class UsageRepository(BaseRepository):
         self,
         org_id: UUID,
     ) -> list[OrganizationUsage]:
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("month", desc=True)
-            .execute()
         )
 
         return self._many(response)
@@ -135,7 +133,7 @@ class UsageRepository(BaseRepository):
         api_calls_increment: int = 0,
         ai_cost_increment: Decimal = Decimal("0"),
     ) -> None:
-        self.db.rpc(
+        await execute(self.db.rpc(
             "usage_update_metrics",
             {
                 "p_org_id": str(org_id),
@@ -147,7 +145,7 @@ class UsageRepository(BaseRepository):
                 "p_ai_cost_increment": str(ai_cost_increment),
                 "p_user_id": str(user_id) if user_id else None,
             },
-        ).execute()
+        ))
 
     # =========================================================
     # Month

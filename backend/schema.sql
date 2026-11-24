@@ -13,12 +13,17 @@
 --   20261011_accounting_tax_code_mappings.sql
 --   20261012_tenant_isolation_rls_and_audit_indexes.sql
 --   20261013_auth_email_otp_verification.sql
+--   20261014_onboarding_drafts.sql
 --   20261109_ap_coding_reasoning.sql
 --   20261109_ap_email_address_rotation.sql
 --   20261109_ap_email_intake_rate_limit.sql
 --   20261109_private_documents_bucket.sql
 --   20261109_resumable_business_onboarding.sql
 --   20261110_admin_mfa_recovery.sql
+--   20261110_purchase_order_00_org_number.sql
+--   20261110_purchase_order_lines_and_atomic_receipts.sql
 --   20261110_vendor_supplier_lifecycle.sql
 --   20261111_atomic_member_seat_capacity.sql
+--   20261111_document_match_allocations.sql
+--   20261116_coding_rule_match_counts_batch.sql
 -- Keep this manifest synchronized whenever a migration is added.

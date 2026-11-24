@@ -45,6 +45,8 @@ STARTER_ACCOUNTS: list[dict] = [
 ]
 
 
+from app.core.db import execute
+
 def missing_starter_accounts(existing_codes: set[str]) -> list[dict]:
     """Return starter rows whose code is not already present."""
     return [account for account in STARTER_ACCOUNTS if account["account_code"] not in existing_codes]
@@ -61,10 +63,9 @@ async def seed_starter_chart_of_accounts(org_id: UUID, db=None) -> dict:
         db = get_supabase()
 
     rows = (
-        db.table("chart_of_accounts")
+        (await execute(db.table("chart_of_accounts")
         .select("account_code")
-        .eq("org_id", str(org_id))
-        .execute()
+        .eq("org_id", str(org_id))))
         .data
         or []
     )
@@ -82,6 +83,6 @@ async def seed_starter_chart_of_accounts(org_id: UUID, db=None) -> dict:
             }
             for account in missing
         ]
-        db.table("chart_of_accounts").insert(payload).execute()
+        await execute(db.table("chart_of_accounts").insert(payload))
 
     return {"created": len(missing), "skipped": len(STARTER_ACCOUNTS) - len(missing)}

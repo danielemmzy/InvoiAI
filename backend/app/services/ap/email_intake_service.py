@@ -19,6 +19,8 @@ MAX_SENDER_MESSAGES_PER_HOUR = 20
 MAX_ORG_MESSAGES_PER_HOUR = 100
 ALLOWED_TYPES = {"application/pdf", "image/png", "image/jpeg", "image/tiff"}
 
+from app.core.db import execute
+
 class EmailIntakeService:
     """Retry-safe email ingestion. Each attachment has a durable unique key so a
     partially failed message can resume without re-uploading completed files.
@@ -46,38 +48,38 @@ class EmailIntakeService:
         encoded_size = sum(len(a["content_base64"]) for a in attachments)
         if encoded_size > MAX_MESSAGE_BYTES:
             raise ValueError("Email message exceeds 32 MB.")
-        rows = self.db.table("ap_email_intake_addresses").select("*").eq(
-            "email_address", to_address.lower().strip()).eq("is_active", True).limit(1).execute().data
+        rows = (await execute(self.db.table("ap_email_intake_addresses").select("*").eq(
+            "email_address", to_address.lower().strip()).eq("is_active", True).limit(1))).data
         if not rows:
             raise ValueError("Unknown or inactive InvoiAI intake address.")
         address = rows[0]; org_id = UUID(address["org_id"])
         auth_results = auth_results if isinstance(auth_results, dict) else {}
         auth_results = {key: str(auth_results.get(key, "missing")).lower()[:32] for key in ("spf", "dkim", "dmarc")}
         auth_failure = {key: value for key, value in auth_results.items() if value != "pass"}
-        event_rows = self.db.table("ap_email_intake_events").select("id,processed").eq(
-            "intake_address_id", address["id"]).eq("provider_message_id", message_id).limit(1).execute().data or []
+        event_rows = (await execute(self.db.table("ap_email_intake_events").select("id,processed").eq(
+            "intake_address_id", address["id"]).eq("provider_message_id", message_id).limit(1))).data or []
         if event_rows:
             event = event_rows[0]
             if event.get("processed"):
                 return {"duplicate": True, "documents": []}
         else:
             window_start = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-            recent = self.db.table("ap_email_intake_events").select("id").eq("org_id", str(org_id)).gte(
-                "created_at", window_start).limit(MAX_ORG_MESSAGES_PER_HOUR).execute().data or []
+            recent = (await execute(self.db.table("ap_email_intake_events").select("id").eq("org_id", str(org_id)).gte(
+                "created_at", window_start).limit(MAX_ORG_MESSAGES_PER_HOUR))).data or []
             if len(recent) >= MAX_ORG_MESSAGES_PER_HOUR:
                 raise ValueError("Organization email intake rate limit exceeded.")
             if sender:
-                sender_rows = self.db.table("ap_email_intake_events").select("id").eq(
+                sender_rows = (await execute(self.db.table("ap_email_intake_events").select("id").eq(
                     "org_id", str(org_id)).eq("sender_email", sender.strip().lower()).gte(
-                    "created_at", window_start).limit(MAX_SENDER_MESSAGES_PER_HOUR).execute().data or []
+                    "created_at", window_start).limit(MAX_SENDER_MESSAGES_PER_HOUR))).data or []
                 if len(sender_rows) >= MAX_SENDER_MESSAGES_PER_HOUR:
                     raise ValueError("Sender email intake rate limit exceeded.")
-            event = self.db.table("ap_email_intake_events").insert({
+            event = (await execute(self.db.table("ap_email_intake_events").insert({
                 "org_id": str(org_id), "intake_address_id": address["id"],
                 "provider_message_id": message_id, "sender_email": sender.strip().lower() if sender else None, "subject": subject,
                 "attachment_count": len(attachments), "metadata": {"auth_results": auth_results,
                 "quarantined_for_auth": bool(auth_failure)}, "processed": False,
-            }).execute().data[0]
+            }))).data[0]
         docs = []
         try:
             total_size = 0
@@ -103,15 +105,15 @@ class EmailIntakeService:
                     raise ValueError(f"Attachment '{filename}' is not a supported file or its signature does not match.")
                 digest = hashlib.sha256(content).hexdigest()
                 key = hashlib.sha256(f"{address['id']}:{message_id}:{index}:{digest}".encode()).hexdigest()
-                prior = self.db.table("ap_email_intake_attachments").select("document_id,status").eq("idempotency_key", key).limit(1).execute().data or []
+                prior = (await execute(self.db.table("ap_email_intake_attachments").select("document_id,status").eq("idempotency_key", key).limit(1))).data or []
                 if prior and prior[0].get("status") == "processed":
                     if prior[0].get("document_id"): docs.append(prior[0]["document_id"])
                     continue
                 if not prior:
-                    self.db.table("ap_email_intake_attachments").insert({
+                    await execute(self.db.table("ap_email_intake_attachments").insert({
                         "org_id": str(org_id), "event_id": event["id"], "attachment_index": index,
                         "filename": filename, "content_sha256": digest, "idempotency_key": key, "status": "processing"
-                    }).execute()
+                    }))
                 doc = await self.upload.upload(org_id=org_id, user_id=UUID(address["created_by"]) if address.get("created_by") else None,
                     filename=filename, content_type=content_type, content=content, industry=industry,
                     document_type=DocumentType.INVOICE, currency=currency, source_override="email_forward",
@@ -119,10 +121,10 @@ class EmailIntakeService:
                     external_metadata={"email_message_id": message_id, "sender": sender, "subject": subject,
                         "email_auth_results": auth_results})
                 doc_id = str(doc.id)
-                self.db.table("ap_email_intake_attachments").update({"status":"processed", "document_id":doc_id, "processed_at":"now()"}).eq("idempotency_key", key).execute()
+                await execute(self.db.table("ap_email_intake_attachments").update({"status":"processed", "document_id":doc_id, "processed_at":"now()"}).eq("idempotency_key", key))
                 docs.append(doc_id)
-            self.db.table("ap_email_intake_events").update({"processed": True, "processed_at": "now()", "error_message": None}).eq("id", event["id"]).execute()
+            await execute(self.db.table("ap_email_intake_events").update({"processed": True, "processed_at": "now()", "error_message": None}).eq("id", event["id"]))
             return {"duplicate": False, "documents": docs}
         except Exception as exc:
-            self.db.table("ap_email_intake_events").update({"processed": False, "error_message": str(exc)[:1000]}).eq("id", event["id"]).execute()
+            await execute(self.db.table("ap_email_intake_events").update({"processed": False, "error_message": str(exc)[:1000]}).eq("id", event["id"]))
             raise

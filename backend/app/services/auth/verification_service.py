@@ -382,8 +382,18 @@ def resolve_email_verified(
 
     try:
         status = EmailVerificationRepository().latest_status_for_user_sync(user_id)
-    except Exception:
-        logger.warning("verification_state_lookup_failed", exc_info=True)
+    except Exception as exc:
+        # The fallback exists so an infrastructure hiccup does not lock every
+        # existing account out. Logging must therefore never be able to turn
+        # that fallback into a request failure.
+        try:
+            logger.warning(
+                "verification_state_lookup_failed",
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
+        except Exception:  # pragma: no cover - logging must not fail a request
+            pass
         return True
 
     if status is None:

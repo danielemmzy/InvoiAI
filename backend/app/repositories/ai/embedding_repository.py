@@ -16,6 +16,7 @@ from app.models.domain.embedding import (
 )
 from app.repositories.base import BaseRepository
 from app.schemas.embedding import DocumentEmbeddingMatch, OrganizationEmbeddingMatch, OrganizationEmbeddingMatch, VendorEmbeddingMatch
+from app.core.db import execute
 
 
 class EmbeddingRepository(BaseRepository):
@@ -52,7 +53,7 @@ class EmbeddingRepository(BaseRepository):
         mapper,
         data,
     ):
-        response = self._query(table).insert(mapper.to_insert(data)).execute()
+        response = await execute(self._query(table).insert(mapper.to_insert(data)))
 
         row = self.raw(response)
 
@@ -66,7 +67,7 @@ class EmbeddingRepository(BaseRepository):
         value: UUID,
     ):
         response = (
-            self._query(table).select("*").eq(column, str(value)).limit(1).execute()
+            await execute(self._query(table).select("*").eq(column, str(value)).limit(1))
         )
 
         row = self.raw(response)
@@ -81,11 +82,10 @@ class EmbeddingRepository(BaseRepository):
         value: UUID,
         data,
     ):
-        response = (
+        response = await execute(
             self._query(table)
             .update(mapper.to_update(data))
             .eq(column, str(value))
-            .execute()
         )
 
         row = self.raw(response)
@@ -99,7 +99,7 @@ class EmbeddingRepository(BaseRepository):
         value: UUID,
     ) -> bool:
 
-        (self._query(table).delete().eq(column, str(value)).execute())
+        await execute(self._query(table).delete().eq(column, str(value)))
 
         return True
 
@@ -111,7 +111,7 @@ class EmbeddingRepository(BaseRepository):
     ) -> bool:
 
         response = (
-            self._query(table).select("id").eq(column, str(value)).limit(1).execute()
+            await execute(self._query(table).select("id").eq(column, str(value)).limit(1))
         )
 
         return bool(response.data)
@@ -323,14 +323,14 @@ class EmbeddingRepository(BaseRepository):
             match_document_embeddings
         """
 
-        response = self.db.rpc(
+        response = await execute(self.db.rpc(
             "match_document_embeddings",
             {
                 "p_org_id": str(org_id),
                 "query_embedding": embedding,
                 "match_count": limit,
             },
-        ).execute()
+        ))
 
         return [
             DocumentEmbeddingMatch.model_validate(item)
@@ -345,14 +345,14 @@ class EmbeddingRepository(BaseRepository):
         limit: int = 5,
     ) -> list[VendorEmbeddingMatch]:
 
-        response = self.db.rpc(
+        response = await execute(self.db.rpc(
             "match_vendor_embeddings",
             {
                 "p_org_id": str(org_id),
                 "query_embedding": embedding,
                 "match_count": limit,
             },
-        ).execute()
+        ))
 
         return [
             VendorEmbeddingMatch.model_validate(item) for item in (response.data or [])
@@ -366,7 +366,7 @@ class EmbeddingRepository(BaseRepository):
         limit: int = 3,
     ) -> list[OrganizationEmbeddingMatch]:
 
-        response = (
+        response = await execute(
             self.db.rpc(
                 "match_organization_embeddings",
                 {
@@ -375,7 +375,6 @@ class EmbeddingRepository(BaseRepository):
                     "match_count": limit,
                 },
             )
-            .execute()
         )
 
         return [
@@ -481,14 +480,13 @@ class EmbeddingRepository(BaseRepository):
             for embedding in embeddings
         ]
 
-        response = (
+        response = await execute(
             self.db
             .table(self.DOCUMENT_TABLE)
             .upsert(
                 payload,
                 on_conflict="document_id",
             )
-            .execute()
         )
 
         return [

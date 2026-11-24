@@ -28,6 +28,8 @@ from typing import Any
 from uuid import UUID
 
 
+from app.core.db import execute
+
 class AccountingProviderError(Exception):
     pass
 
@@ -89,8 +91,8 @@ async def get_accounting_provider(org_id: UUID, db=None) -> AccountingProvider:
     database = db or get_supabase()
 
     connections = (
-        database.table("integration_connections").select("id,provider")
-        .eq("org_id", str(org_id)).eq("is_active", True).execute().data
+        (await execute(database.table("integration_connections").select("id,provider")
+        .eq("org_id", str(org_id)).eq("is_active", True))).data
         or []
     )
     if not connections:

@@ -3,11 +3,13 @@ import json
 import asyncio
 import time
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
+from app.context import AuthUser
 from app.core import auth
 from app.core import supabase as supabase_core
 from app.core import mfa as mfa_guards
@@ -123,10 +125,12 @@ def test_recovery_consumption_is_bound_to_user_session_and_hashed_code(monkeypat
 
 
 def test_admin_without_verified_totp_is_blocked_from_business_routes(monkeypatch):
-    user = SimpleNamespace(id="user-1", aal="aal1")
-    monkeypatch.setattr(auth, "validate_access_token", lambda _token: user)
+    user = AuthUser(id=UUID("00000000-0000-0000-0000-000000000001"), email="admin@example.com")
+    monkeypatch.setattr(
+        auth, "validate_token_identity", lambda _token: (user, [], True)
+    )
+    monkeypatch.setattr(auth, "resolve_email_verified", lambda *_a, **_k: True)
     monkeypatch.setattr(mfa_service, "has_admin_membership", lambda _user_id: True)
-    monkeypatch.setattr(mfa_service, "factors_for_user", lambda _token: SimpleNamespace(totp=[]))
     request = Request({"type": "http", "method": "GET", "path": "/api/v2/documents", "headers": []})
 
     with pytest.raises(HTTPException) as raised:
@@ -137,13 +141,72 @@ def test_admin_without_verified_totp_is_blocked_from_business_routes(monkeypatch
 
 
 def test_admin_without_verified_totp_can_reach_mfa_setup(monkeypatch):
-    user = SimpleNamespace(id="user-1", aal="aal1")
-    monkeypatch.setattr(auth, "validate_access_token", lambda _token: user)
+    user = AuthUser(id=UUID("00000000-0000-0000-0000-000000000001"), email="admin@example.com")
+    monkeypatch.setattr(
+        auth, "validate_token_identity", lambda _token: (user, [], True)
+    )
+    monkeypatch.setattr(auth, "resolve_email_verified", lambda *_a, **_k: True)
     monkeypatch.setattr(mfa_service, "has_admin_membership", lambda _user_id: True)
-    monkeypatch.setattr(mfa_service, "factors_for_user", lambda _token: SimpleNamespace(totp=[]))
     request = Request({"type": "http", "method": "POST", "path": "/api/v2/auth/mfa/enroll", "headers": []})
 
-    assert asyncio.run(auth.get_current_user(request, SimpleNamespace(credentials="access-token"))) is user
+    assert asyncio.run(auth.get_current_user(request, SimpleNamespace(credentials="access-token"))) == user
+
+
+def test_mfa_exempt_route_skips_admin_membership_lookup(monkeypatch):
+    """Pre-MFA routes must not pay for an admin lookup they cannot use."""
+
+    user = AuthUser(id=UUID("00000000-0000-0000-0000-000000000001"), email="admin@example.com")
+    monkeypatch.setattr(
+        auth, "validate_token_identity", lambda _token: (user, [], True)
+    )
+    calls: list[tuple[str, object]] = []
+
+    def resolve_email(user_id, *, supabase_verified):
+        calls.append(("email_verified", supabase_verified))
+        return True
+
+    def unexpected_admin_lookup(_user_id):  # pragma: no cover - regression path
+        raise AssertionError("MFA-exempt routes must not look up admin membership")
+
+    monkeypatch.setattr(auth, "resolve_email_verified", resolve_email)
+    monkeypatch.setattr(mfa_service, "has_admin_membership", unexpected_admin_lookup)
+    request = Request(
+        {"type": "http", "method": "POST", "path": "/api/v2/auth/mfa/challenge", "headers": []}
+    )
+
+    resolved = asyncio.run(
+        auth.get_current_user(request, SimpleNamespace(credentials="access-token"))
+    )
+
+    assert resolved.is_verified is True
+    assert calls == [("email_verified", True)]
+
+
+def test_admin_mfa_gate_uses_factors_from_the_validated_token(monkeypatch):
+    """The gate must not perform a second auth-service lookup for factors."""
+
+    user = AuthUser(id=UUID("00000000-0000-0000-0000-000000000001"), email="admin@example.com")
+    verified_totp = SimpleNamespace(factor_type="totp", status="verified")
+    monkeypatch.setattr(
+        auth,
+        "validate_token_identity",
+        lambda _token: (user, [verified_totp], True),
+    )
+    monkeypatch.setattr(auth, "resolve_email_verified", lambda *_a, **_k: True)
+    monkeypatch.setattr(mfa_service, "has_admin_membership", lambda _user_id: True)
+
+    def _unexpected(*_args, **_kwargs):
+        raise AssertionError("factors must come from the validated token")
+
+    monkeypatch.setattr(mfa_service, "factors_for_user", _unexpected)
+    request = Request({"type": "http", "method": "GET", "path": "/api/v2/documents", "headers": []})
+
+    assert (
+        asyncio.run(
+            auth.get_current_user(request, SimpleNamespace(credentials="access-token"))
+        )
+        == user
+    )
 
 
 def test_admin_step_up_requires_recent_totp_amr_or_session_recovery_grant(monkeypatch):

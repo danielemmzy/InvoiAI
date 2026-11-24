@@ -5,6 +5,7 @@ from uuid import UUID
 from app.mappers.document_mapper import OCRResultMapper
 from app.models.domain.document import OCRResult
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class OCRRepository(BaseRepository):
@@ -63,7 +64,7 @@ class OCRRepository(BaseRepository):
         Retrieve the latest OCR result for a document.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -75,7 +76,6 @@ class OCRRepository(BaseRepository):
                 desc=True,
             )
             .limit(1)
-            .execute()
         )
 
         return self._one(
@@ -92,7 +92,7 @@ class OCRRepository(BaseRepository):
         List OCR results for a document.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq(
@@ -104,7 +104,6 @@ class OCRRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(

@@ -23,6 +23,7 @@ longer has a JS-readable copy of the token to put in a header.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import jwt
@@ -31,10 +32,12 @@ from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.context import AuthUser
+from app.core.db import run_db
 from app.core.error_handler import classify_exception, platform_error
 from app.core.supabase import get_supabase
 from app.services.auth.mfa_security import totp_verified_at
 from app.services.auth import mfa_service
+from app.services.auth.verification_service import resolve_email_verified
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +50,33 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 def validate_access_token(token: str) -> AuthUser:
     """Validate a Supabase access token and return the authenticated user."""
+    user, _factors, supabase_verified = validate_token_identity(token)
+    from app.services.auth.verification_service import resolve_email_verified
+
+    return user.model_copy(
+        update={
+            "is_verified": resolve_email_verified(
+                user.id,
+                supabase_verified=supabase_verified,
+            )
+        }
+    )
+
+
+def validate_token_identity(token: str) -> tuple[AuthUser, list, bool]:
+    """Validate a token and return the identity it proves.
+
+    Returns ``(user, factors, supabase_email_confirmed)``.
+
+    Supabase's ``GET /auth/v1/user`` response already contains the user's
+    factors. Re-reading them through ``mfa.list_factors()`` performed a second,
+    identical auth-service round trip on every admin request, so the factors
+    that arrived with the validated user are returned instead.
+
+    Email-verification state is deliberately *not* resolved here: the caller
+    runs it concurrently with the admin-membership lookup, which needs the same
+    user id and would otherwise be a third serial round trip.
+    """
     try:
         response = get_supabase().auth.get_user(token)
 
@@ -76,23 +106,24 @@ def validate_access_token(token: str) -> AuthUser:
         role = app_metadata.get("role") or user_metadata.get("role")
         plan = app_metadata.get("plan") or user_metadata.get("plan") or "free"
 
-        from app.services.auth.verification_service import resolve_email_verified
-
-        return AuthUser(
+        auth_user = AuthUser(
             id=user.id,
             email=user.email or "",
             org_id=org_id,
             role=role,
             plan=str(plan),
             is_active=True,
-            is_verified=resolve_email_verified(
-                user.id,
-                supabase_verified=user.email_confirmed_at is not None,
-            ),
+            is_verified=False,
             aal=claims.get("aal") if claims.get("aal") in {"aal1", "aal2"} else "aal1",
             token_issued_at=claims.get("iat") if isinstance(claims.get("iat"), int) else None,
             session_id=claims.get("session_id") if isinstance(claims.get("session_id"), str) else None,
             mfa_verified_at=totp_verified_at(claims.get("amr")),
+        )
+
+        return (
+            auth_user,
+            list(getattr(user, "factors", None) or []),
+            user.email_confirmed_at is not None,
         )
 
     except HTTPException:
@@ -144,27 +175,46 @@ async def get_current_user(
             detail="Authorization header missing",
         )
 
-    user = validate_access_token(token)
+    user, factors, supabase_verified = await run_db(validate_token_identity, token)
 
     path = request.url.path
-    if (
+    mfa_exempt = (
         path.startswith("/api/v2/auth/mfa/")
         or path in {"/api/v2/auth/logout", "/api/v2/auth/reset-password"}
         or path.startswith("/api/v2/support/")
-    ):
-        return user
+    )
+
+    if mfa_exempt:
+        # These routes must stay reachable before MFA is enrolled, so the
+        # admin-membership lookup would be a wasted query on every request.
+        is_verified = await run_db(
+            resolve_email_verified,
+            user.id,
+            supabase_verified=supabase_verified,
+        )
+        return user.model_copy(update={"is_verified": is_verified})
+
+    # Email-verification state and admin membership depend on the same user id
+    # and are independent of each other, so they are resolved concurrently.
+    is_verified, is_admin = await asyncio.gather(
+        run_db(
+            resolve_email_verified,
+            user.id,
+            supabase_verified=supabase_verified,
+        ),
+        run_db(mfa_service.has_admin_membership, user.id),
+    )
+    user = user.model_copy(update={"is_verified": is_verified})
 
     try:
-        if mfa_service.has_admin_membership(user.id):
-            factors = mfa_service.factors_for_user(token)
-            if not factors.totp:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
-                        "code": "MFA_ENROLLMENT_REQUIRED",
-                        "message": "Set up an authenticator app before using your organization workspace.",
-                    },
-                )
+        if is_admin and not mfa_service.has_verified_totp_factor(factors):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "MFA_ENROLLMENT_REQUIRED",
+                    "message": "Set up an authenticator app before using your organization workspace.",
+                },
+            )
     except HTTPException:
         raise
     except Exception as exc:

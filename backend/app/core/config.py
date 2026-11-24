@@ -150,6 +150,11 @@ class Settings(BaseSettings):
 
     redis_max_connections: int = 100
 
+    # Blocking Supabase/PostgREST calls run in a bounded worker pool so they
+    # never stall the asyncio event loop. Sized to overlap network latency, not
+    # to create unbounded threads.
+    db_thread_pool_size: int = 32
+
     # Distributed scheduler locking. Required in production so multiple
     # application workers cannot execute the same cron job concurrently.
     scheduler_lock_enabled: bool = True

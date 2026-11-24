@@ -6,6 +6,7 @@ from uuid import UUID
 from app.mappers.stripe_event_mapper import StripeEventMapper
 from app.models.domain.stripe_event import StripeEvent
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class StripeEventRepository(BaseRepository):
@@ -15,12 +16,11 @@ class StripeEventRepository(BaseRepository):
     mapper = StripeEventMapper
 
     async def get_by_stripe_event_id(self, stripe_event_id: str) -> StripeEvent | None:
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("stripe_event_id", stripe_event_id)
             .limit(1)
-            .execute()
         )
         return self._one(response)
 
@@ -46,12 +46,13 @@ class StripeEventRepository(BaseRepository):
         )
 
     async def mark_processing(self, event_id: UUID) -> bool:
-        response = (
+        attempts = await self._next_attempt(event_id)
+        response = await execute(
             self.table()
             .update(
                 {
                     "status": "processing",
-                    "attempts": self._next_attempt(event_id),
+                    "attempts": attempts,
                     "processing_started_at": datetime.now(UTC).isoformat(),
                     "last_error": None,
                     "failed_at": None,
@@ -60,19 +61,18 @@ class StripeEventRepository(BaseRepository):
             )
             .eq("id", str(event_id))
             .eq("status", "failed")
-            .execute()
         )
         return bool(response.data)
 
-    def _next_attempt(self, event_id: UUID) -> int:
-        response = (
-            self.table().select("attempts").eq("id", str(event_id)).limit(1).execute()
+    async def _next_attempt(self, event_id: UUID) -> int:
+        response = await execute(
+            self.table().select("attempts").eq("id", str(event_id)).limit(1)
         )
         row = response.data[0] if response.data else {}
         return int(row.get("attempts") or 0) + 1
 
     async def mark_processed(self, event_id: UUID) -> bool:
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -83,12 +83,11 @@ class StripeEventRepository(BaseRepository):
             )
             .eq("id", str(event_id))
             .eq("status", "processing")
-            .execute()
         )
         return bool(response.data)
 
     async def mark_failed(self, event_id: UUID, error: str) -> bool:
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -100,6 +99,5 @@ class StripeEventRepository(BaseRepository):
             )
             .eq("id", str(event_id))
             .eq("status", "processing")
-            .execute()
         )
         return bool(response.data)

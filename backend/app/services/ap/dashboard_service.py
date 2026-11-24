@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from calendar import monthrange
 from collections import defaultdict
 from datetime import date, timedelta
@@ -155,11 +156,6 @@ class APDashboardService:
 
     async def _enrich(self, org_id: UUID, rows: list[dict]) -> tuple[list[dict], dict[str, dict]]:
         ids = [UUID(str(row["id"])) for row in rows if row.get("id")]
-        analyses = self.repository.get_analyses(org_id, ids)
-        latest: dict[str, dict] = {}
-        for analysis in analyses:
-            key = str(analysis.get("document_id"))
-            latest.setdefault(key, analysis)
 
         vendor_ids = []
         seen: set[str] = set()
@@ -167,7 +163,18 @@ class APDashboardService:
             if row.get("vendor_id") and str(row["vendor_id"]) not in seen:
                 seen.add(str(row["vendor_id"]))
                 vendor_ids.append(UUID(str(row["vendor_id"])))
-        vendors = self.repository.get_vendors(org_id, vendor_ids)
+
+        # Analyses and vendors are independent reads; fetch them together so
+        # enrichment costs one round-trip worth of latency instead of two.
+        analyses, vendors = await asyncio.gather(
+            self.repository.get_analyses(org_id, ids),
+            self.repository.get_vendors(org_id, vendor_ids),
+        )
+        latest: dict[str, dict] = {}
+        for analysis in analyses:
+            key = str(analysis.get("document_id"))
+            latest.setdefault(key, analysis)
+
         vendor_map = {str(v["id"]): v for v in vendors}
 
         enriched: list[dict] = []
@@ -207,13 +214,13 @@ class APDashboardService:
             raise
 
     async def list_invoices(self, org_id: UUID, filters, limit: int, offset: int) -> dict:
-        org_currency = self.repository.get_organization_currency(org_id)
+        org_currency = await self.repository.get_organization_currency(org_id)
         reporting_currency = (filters.reporting_currency or org_currency).upper()
         today = date.today()
         date_from = filters.date_from or self._add_months(self._month_start(today), -11)
         date_to = filters.date_to or today
 
-        rows, _ = self.repository.list_invoices(
+        rows, _ = await self.repository.list_invoices(
             org_id,
             date_from=filters.date_from,
             date_to=filters.date_to,
@@ -259,7 +266,7 @@ class APDashboardService:
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     async def summary(self, org_id: UUID, filters) -> dict:
-        org_currency = self.repository.get_organization_currency(org_id)
+        org_currency = await self.repository.get_organization_currency(org_id)
         reporting_currency = (filters.reporting_currency or org_currency).upper()
 
         today = date.today()
@@ -269,7 +276,7 @@ class APDashboardService:
 
         # currency remains the transaction-currency filter. Reporting currency
         # is separate so selecting NGN does not hide USD/EUR invoices.
-        rows = self.repository.list_invoice_projection(
+        rows = await self.repository.list_invoice_projection(
             org_id,
             date_from=date_from,
             date_to=date_to,
@@ -336,8 +343,10 @@ class APDashboardService:
         avg_monthly_billed = billed_total / Decimal(max(len(months), 1))
         turnover_days = (open_amount / avg_monthly_billed * Decimal("30")) if avg_monthly_billed > ZERO else ZERO
 
+        total_vendors = await self.repository.count_vendors(org_id)
+
         return {
-            "total_vendors": self.repository.count_vendors(org_id),
+            "total_vendors": total_vendors,
             "open_vendors": len(open_vendor_ids),
             "total_invoices": len(rows),
             "open_invoices": sum(1 for r in rows if r["computed_status"] not in {"paid", "rejected"}),
@@ -356,12 +365,12 @@ class APDashboardService:
         }
 
     async def top_vendors(self, org_id: UUID, filters) -> list[dict]:
-        org_currency = self.repository.get_organization_currency(org_id)
+        org_currency = await self.repository.get_organization_currency(org_id)
         reporting_currency = (filters.reporting_currency or org_currency).upper()
         today = date.today()
         date_from = filters.date_from or self._add_months(self._month_start(today), -11)
         date_to = filters.date_to or today
-        rows = self.repository.list_invoice_projection(
+        rows = await self.repository.list_invoice_projection(
             org_id,
             date_from=date_from,
             date_to=date_to,
@@ -402,11 +411,11 @@ class APDashboardService:
         return sorted(result, key=lambda x: (x["current_balance"], x["overdue_balance"]), reverse=True)[:10]
 
     async def aging(self, org_id: UUID, filters) -> dict:
-        currency = (filters.reporting_currency or self.repository.get_organization_currency(org_id)).upper()
+        currency = (filters.reporting_currency or await self.repository.get_organization_currency(org_id)).upper()
         today = date.today()
         date_from = filters.date_from or self._add_months(self._month_start(today), -11)
         date_to = filters.date_to or today
-        rows = self.repository.list_invoice_projection(
+        rows = await self.repository.list_invoice_projection(
             org_id,
             date_from=date_from,
             date_to=date_to,

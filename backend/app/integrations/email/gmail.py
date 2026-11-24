@@ -10,6 +10,8 @@ from app.integrations.google.client import (
 )
 
 
+from app.core.db import execute
+
 class GmailService:
     """
     Gmail API wrapper.
@@ -83,15 +85,14 @@ class GmailService:
         ).decode()
 
         return (
-            gmail.users()
+            (await execute(gmail.users()
             .messages()
             .send(
                 userId="me",
                 body={
                     "raw": encoded,
                 },
-            )
-            .execute()
+            )))
         )
 
     # =========================================================
@@ -110,14 +111,13 @@ class GmailService:
         )
 
         return (
-            gmail.users()
+            (await execute(gmail.users()
             .messages()
             .get(
                 userId="me",
                 id=message_id,
                 format="full",
-            )
-            .execute()
+            )))
         )
 
     async def list_messages(
@@ -132,7 +132,7 @@ class GmailService:
             org_id=org_id,
         )
 
-        response = (
+        response = await execute(
             gmail.users()
             .messages()
             .list(
@@ -140,7 +140,6 @@ class GmailService:
                 q=query,
                 maxResults=max_results,
             )
-            .execute()
         )
 
         return response.get(
@@ -162,13 +161,12 @@ class GmailService:
             org_id=org_id,
         )
 
-        response = (
+        response = await execute(
             gmail.users()
             .labels()
             .list(
                 userId="me",
             )
-            .execute()
         )
 
         return response.get(
@@ -191,14 +189,13 @@ class GmailService:
             org_id=org_id,
         )
 
-        (
+        await execute(
             gmail.users()
             .messages()
             .delete(
                 userId="me",
                 id=message_id,
             )
-            .execute()
         )
 
         return True

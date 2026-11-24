@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
+from app.core.db import execute
 from app.core.supabase import get_supabase
 from app.repositories.audit.audit_repository import AuditRepository
 from app.services.audit_service import AuditService
@@ -31,7 +33,7 @@ class DocumentCaptureService:
         self.line_items = line_items or LineItemService(repository=self.documents)
 
     async def update_capture(self, *, org_id: UUID, user_id: UUID, document_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
-        current_rows = self.db.table("documents").select("*").eq("id", str(document_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
+        current_rows = (await execute(self.db.table("documents").select("*").eq("id", str(document_id)).eq("org_id", str(org_id)).limit(1))).data or []
         if not current_rows:
             raise DocumentNotFoundError("Document not found.")
         current = current_rows[0]
@@ -94,7 +96,7 @@ class DocumentCaptureService:
                 update["processing_progress"] = 100
                 update["ap_status"] = "received"
                 update["ap_enabled"] = False
-            self.db.table("documents").update(update).eq("id", str(document_id)).eq("org_id", str(org_id)).execute()
+            await execute(self.db.table("documents").update(update).eq("id", str(document_id)).eq("org_id", str(org_id)))
 
         if payload.get("lines") is not None:
             lines = []
@@ -107,16 +109,33 @@ class DocumentCaptureService:
             org_id=org_id, user_id=user_id, action="document.capture_edited", document_id=document_id,
             changed_fields=[k for k in payload.keys() if k != "lines"], line_count=len(payload.get("lines") or []) if payload.get("lines") is not None else None,
         )
-        result = self.db.table("documents").select("*").eq("id", str(document_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
+        result = (await execute(self.db.table("documents").select("*").eq("id", str(document_id)).eq("org_id", str(org_id)).limit(1))).data or []
         return result[0] if result else current
 
-    def options(self, *, org_id: UUID, document_id: UUID, field: str, query: str = "") -> list[dict[str, Any]]:
-        doc_rows = self.db.table("documents").select("vendor_id,vendor_name,document_number,purchase_order_id,capture_overrides").eq("id", str(document_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
+    async def options(self, *, org_id: UUID, document_id: UUID, field: str, query: str = "") -> list[dict[str, Any]]:
+        # The document row, its OCR capture and the field's suggestion list are
+        # independent reads: all three are dispatched in the same round trip.
+        q = (query or "").strip()
+        suggestion_query = self._suggestion_query(org_id=org_id, field=field, query=q)
+
+        async def _no_suggestions():
+            return None
+
+        doc_response, ocr_response, suggestions_response = await asyncio.gather(
+            execute(
+                self.db.table("documents").select("vendor_id,vendor_name,document_number,purchase_order_id,capture_overrides").eq("id", str(document_id)).eq("org_id", str(org_id)).limit(1)
+            ),
+            execute(
+                self.db.table("ocr_results").select("key_value_pairs").eq("document_id", str(document_id)).eq("org_id", str(org_id)).order("created_at", desc=True).limit(1)
+            ),
+            execute(suggestion_query) if suggestion_query is not None else _no_suggestions(),
+        )
+        doc_rows = doc_response.data or []
         if not doc_rows:
             raise ValueError("Document not found.")
         doc = doc_rows[0]
         values: list[dict[str, Any]] = []
-        ocr_rows = self.db.table("ocr_results").select("key_value_pairs").eq("document_id", str(document_id)).eq("org_id", str(org_id)).order("created_at", desc=True).limit(1).execute().data or []
+        ocr_rows = ocr_response.data or []
         kv = (ocr_rows[0].get("key_value_pairs") or {}) if ocr_rows else {}
         aliases = {
             "document_number": {"invoice_number", "invoice_no", "invoice_number_extracted", "po_number", "document_number"},
@@ -136,21 +155,12 @@ class DocumentCaptureService:
         current_value = overrides.get(field) if field.startswith("gl_account") else doc.get(field)
         if current_value not in (None, ""):
             values.append({"value": str(current_value), "label": str(current_value), "source": "current"})
-        q = (query or "").strip()
-        if field == "vendor_name":
-            query_builder = self.db.table("vendors").select("id,name").eq("org_id", str(org_id)).limit(25)
-            if q: query_builder = query_builder.ilike("name", f"%{q}%")
-            for row in query_builder.execute().data or []:
+        for row in (suggestions_response.data if suggestions_response is not None else []) or []:
+            if field == "vendor_name":
                 values.append({"value": row["name"], "label": row["name"], "source": "vendor", "id": row["id"]})
-        elif field in {"gl_account_name", "gl_account_id"}:
-            query_builder = self.db.table("chart_of_accounts").select("id,account_code,account_name,account_type").eq("org_id", str(org_id)).eq("is_active", True).limit(50)
-            if q: query_builder = query_builder.or_(f"account_name.ilike.%{q}%,account_code.ilike.%{q}%")
-            for row in query_builder.execute().data or []:
+            elif field in {"gl_account_name", "gl_account_id"}:
                 values.append({"value": row["account_name"], "label": f"{row.get('account_code') or ''} · {row['account_name']}", "source": "chart_of_accounts", "id": row["id"], "code": row.get("account_code")})
-        elif field == "document_number":
-            query_builder = self.db.table("purchase_orders").select("id,po_number").eq("org_id", str(org_id)).limit(25)
-            if q: query_builder = query_builder.ilike("po_number", f"%{q}%")
-            for row in query_builder.execute().data or []:
+            elif field == "document_number":
                 values.append({"value": row["po_number"], "label": row["po_number"], "source": "purchase_order", "id": row["id"]})
         dedup: dict[str, dict[str, Any]] = {}
         for item in values:
@@ -158,3 +168,16 @@ class DocumentCaptureService:
             if key and key not in dedup:
                 dedup[key] = item
         return list(dedup.values())[:50]
+
+    def _suggestion_query(self, *, org_id: UUID, field: str, query: str):
+        """Build the field's suggestion query, or None when it has no lookup."""
+        if field == "vendor_name":
+            query_builder = self.db.table("vendors").select("id,name").eq("org_id", str(org_id)).limit(25)
+            return query_builder.ilike("name", f"%{query}%") if query else query_builder
+        if field in {"gl_account_name", "gl_account_id"}:
+            query_builder = self.db.table("chart_of_accounts").select("id,account_code,account_name,account_type").eq("org_id", str(org_id)).eq("is_active", True).limit(50)
+            return query_builder.or_(f"account_name.ilike.%{query}%,account_code.ilike.%{query}%") if query else query_builder
+        if field == "document_number":
+            query_builder = self.db.table("purchase_orders").select("id,po_number").eq("org_id", str(org_id)).limit(25)
+            return query_builder.ilike("po_number", f"%{query}%") if query else query_builder
+        return None

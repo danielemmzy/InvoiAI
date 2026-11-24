@@ -20,6 +20,7 @@ from app.models.domain.vendor import Vendor
 from app.repositories.base import BaseRepository
 from app.repositories.mixins.external_sync import ExternalSyncMixin
 from datetime import UTC, datetime
+from app.core.db import execute
 
 
 class VendorRepository(BaseRepository, ExternalSyncMixin):
@@ -41,13 +42,12 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         name: str,
     ) -> Vendor | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .ilike("name", name)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -58,13 +58,12 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         email: str,
     ) -> Vendor | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("email", email)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -75,13 +74,12 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         tax_id: str,
     ) -> Vendor | None:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("tax_id", tax_id)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -101,14 +99,13 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         Retrieve a vendor imported from an external system.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("provider", provider)
             .eq("external_id", external_id)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -125,17 +122,17 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         )
 
         if existing is None:
-            response = (
+            response = (await execute(
                 self.table().select("*")
                 .eq("org_id", str(vendor.org_id))
                 .eq("normalized_name", vendor.normalized_name)
-                .limit(1).execute()
-            )
+                .limit(1)
+            ))
             existing = self._one(response)
 
         if existing:
 
-            response = (
+            response = await execute(
                 self.table()
                 .update(
                     {
@@ -154,7 +151,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 )
                 .eq("org_id", str(vendor.org_id))
                 .eq("id", str(existing.id))
-                .execute()
             )
 
             return self._one(response)
@@ -188,7 +184,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         vendor_id: UUID,
     ) -> Vendor | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -196,7 +192,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(vendor_id))
-            .execute()
         )
 
         return self._one(response)
@@ -212,7 +207,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         limit: int = 20,
     ) -> list[Vendor]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -222,7 +217,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 "name",
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -236,7 +230,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> list[Vendor]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -245,7 +239,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             .order(
                 "name",
             )
-            .execute()
         )
 
         return self._many(response)
@@ -256,7 +249,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         preferred: bool,
     ) -> Vendor | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -264,7 +257,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(vendor_id))
-            .execute()
         )
 
         return self._one(response)
@@ -278,7 +270,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> list[Vendor]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -287,7 +279,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             .order(
                 "name",
             )
-            .execute()
         )
 
         return self._many(response)
@@ -298,7 +289,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         reason: str,
     ) -> Vendor | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -307,7 +298,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(vendor_id))
-            .execute()
         )
 
         return self._one(response)
@@ -317,7 +307,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         vendor_id: UUID,
     ) -> Vendor | None:
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 {
@@ -326,7 +316,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 }
             )
             .eq("id", str(vendor_id))
-            .execute()
         )
 
         return self._one(response)
@@ -340,7 +329,8 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         vendor_id: UUID,
     ) -> Vendor | None:
 
-        response = self.table().select("""
+        response = await execute(
+            self.table().select("""
                 invoice_count,
                 receipt_count,
                 total_document_count,
@@ -348,7 +338,8 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 average_spend,
                 risk_score,
                 risk_level
-                """).eq("id", str(vendor_id)).single().execute()
+                """).eq("id", str(vendor_id)).single()
+        )
 
         return self._one(response)
 
@@ -357,7 +348,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         vendor_id: UUID,
     ) -> Vendor | None:
 
-        response = self.table().select("*").eq("id", str(vendor_id)).single().execute()
+        response = await execute(self.table().select("*").eq("id", str(vendor_id)).single())
 
         return self._one(response)
 
@@ -372,14 +363,13 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
                 count="exact",
             )
             .eq("org_id", str(org_id))
-            .execute()
         )
 
         return response.count or 0
@@ -389,7 +379,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -397,7 +387,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             )
             .eq("org_id", str(org_id))
             .eq("is_preferred", True)
-            .execute()
         )
 
         return response.count or 0
@@ -407,7 +396,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -415,7 +404,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             )
             .eq("org_id", str(org_id))
             .eq("is_blocked", True)
-            .execute()
         )
 
         return response.count or 0
@@ -437,7 +425,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             .isoformat()
         )
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -445,7 +433,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
             )
             .eq("org_id", str(org_id))
             .gte("created_at", start)
-            .execute()
         )
 
         return response.count or 0
@@ -456,7 +443,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         limit: int = 10,
     ) -> list[Vendor]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -465,7 +452,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -476,7 +462,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         limit: int = 10,
     ) -> list[Vendor]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -485,7 +471,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -496,7 +481,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         limit: int = 10,
     ) -> list[Vendor]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -505,7 +490,6 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -515,7 +499,7 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
         org_id: UUID,
     ) -> list[Vendor]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -523,30 +507,27 @@ class VendorRepository(BaseRepository, ExternalSyncMixin):
                 "total_spend",
                 desc=True,
             )
-            .execute()
         )
 
         return self._many(response)
 
 
     async def list_for_org(self, org_id: UUID, *, limit: int = 100) -> list[Vendor]:
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .eq("is_active", True)
             .order("updated_at", desc=False)
             .limit(limit)
-            .execute()
         )
         return self._many(response)
 
     async def list_all(self, *, limit: int = 100) -> list[Vendor]:
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .order("updated_at", desc=False)
             .limit(limit)
-            .execute()
         )
         return self._many(response)

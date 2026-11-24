@@ -9,6 +9,7 @@ from app.models.domain.payment_allocation import (
     PaymentAllocation,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class PaymentAllocationRepository(BaseRepository):
@@ -22,11 +23,10 @@ class PaymentAllocationRepository(BaseRepository):
         payment_id: UUID,
     ) -> list[PaymentAllocation]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("payment_id", str(payment_id))
-            .execute()
         )
 
         return self._many(response)
@@ -36,11 +36,10 @@ class PaymentAllocationRepository(BaseRepository):
         document_id: UUID,
     ) -> list[PaymentAllocation]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("document_id", str(document_id))
-            .execute()
         )
 
         return self._many(response)

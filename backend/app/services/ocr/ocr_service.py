@@ -76,6 +76,8 @@ FILE_TYPE_MIME_TYPES: dict[str, str] = {
 }
 
 
+from app.core.db import execute
+
 class OCRService:
     """
     OCR orchestration service.
@@ -1125,15 +1127,14 @@ class OCRService:
             == DocumentType.BANK_STATEMENT
         ):
             org = (
-                get_supabase()
+                (await execute(get_supabase()
                 .table("organizations")
                 .select("features")
                 .eq(
                     "id",
                     str(document.org_id),
                 )
-                .single()
-                .execute()
+                .single()))
                 .data
                 or {}
             )

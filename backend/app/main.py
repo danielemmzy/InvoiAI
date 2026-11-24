@@ -19,6 +19,7 @@ from app.middleware.exception_logging import ExceptionLoggingMiddleware
 from app.core.error_handler import error_response, register_error_handlers
 from app.scheduler.runtime import cron_runtime
 from app.core.redis import close_redis
+from app.core.db import shutdown_executor
 from asgi_correlation_id import CorrelationIdMiddleware
 
 
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await cron_runtime.stop()
+        shutdown_executor()
         await close_redis()
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID
 
+from app.core.db import execute
 from app.core.supabase import get_supabase
 
 
@@ -18,6 +19,9 @@ class APDashboardRepository:
         organizations
 
     Business calculations remain in APDashboardService.
+
+    Every read goes through ``execute`` so the synchronous Supabase client is
+    not called directly on the event loop thread.
     """
 
     def __init__(self, db=None):
@@ -65,7 +69,7 @@ class APDashboardRepository:
     # Paginated invoices
     # ============================================================
 
-    def list_invoices(
+    async def list_invoices(
         self,
         org_id: UUID,
         *,
@@ -103,7 +107,7 @@ class APDashboardRepository:
                 currency.upper(),
             )
 
-        response = (
+        response = await execute(
             query
             .order("document_date", desc=True)
             .order("created_at", desc=True)
@@ -111,7 +115,6 @@ class APDashboardRepository:
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return (
@@ -123,7 +126,7 @@ class APDashboardRepository:
     # Dashboard projection
     # ============================================================
 
-    def list_invoice_projection(
+    async def list_invoice_projection(
         self,
         org_id: UUID,
         *,
@@ -152,11 +155,10 @@ class APDashboardRepository:
                 currency.upper(),
             )
 
-        response = (
+        response = await execute(
             query
             .order("document_date", desc=False)
             .order("created_at", desc=False)
-            .execute()
         )
 
         return response.data or []
@@ -165,7 +167,7 @@ class APDashboardRepository:
     # Vendors
     # ============================================================
 
-    def get_vendors(
+    async def get_vendors(
         self,
         org_id: UUID,
         vendor_ids: list[UUID] | None = None,
@@ -193,16 +195,16 @@ class APDashboardRepository:
                 [str(vendor_id) for vendor_id in vendor_ids],
             )
 
-        response = query.execute()
+        response = await execute(query)
 
         return response.data or []
 
-    def count_vendors(
+    async def count_vendors(
         self,
         org_id: UUID,
     ) -> int:
 
-        response = (
+        response = await execute(
             self.db
             .table("vendors")
             .select(
@@ -211,7 +213,6 @@ class APDashboardRepository:
             )
             .eq("org_id", str(org_id))
             .eq("is_blocked", False)
-            .execute()
         )
 
         return response.count or 0
@@ -220,7 +221,7 @@ class APDashboardRepository:
     # Document analyses
     # ============================================================
 
-    def get_analyses(
+    async def get_analyses(
         self,
         org_id: UUID,
         document_ids: list[UUID],
@@ -229,7 +230,7 @@ class APDashboardRepository:
         if not document_ids:
             return []
 
-        response = (
+        response = await execute(
             self.db
             .table("document_analyses")
             .select(
@@ -249,7 +250,6 @@ class APDashboardRepository:
                 "created_at",
                 desc=True,
             )
-            .execute()
         )
 
         return response.data or []
@@ -258,18 +258,17 @@ class APDashboardRepository:
     # Organization
     # ============================================================
 
-    def get_organization_currency(
+    async def get_organization_currency(
         self,
         org_id: UUID,
     ) -> str:
 
-        response = (
+        response = await execute(
             self.db
             .table("organizations")
             .select("currency")
             .eq("id", str(org_id))
             .limit(1)
-            .execute()
         )
 
         rows = response.data or []

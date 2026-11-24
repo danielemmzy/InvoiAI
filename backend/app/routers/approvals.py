@@ -24,6 +24,7 @@ approver, which is what the frontend approvals queue expects.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -48,6 +49,8 @@ router = APIRouter(
     dependencies=[Depends(require_verified_user)],
 )
 
+
+from app.core.db import execute
 
 def _step_service() -> ApprovalStepService:
     return get_container().approval_step_service
@@ -154,29 +157,33 @@ async def get_document_approval_history(
     from app.core.supabase import get_supabase
 
     rows = (
-        get_supabase()
+        (await execute(get_supabase()
         .table("approval_workflows")
         .select("*")
         .eq("org_id", str(ctx.org_id))
         .eq("document_id", str(document_id))
-        .order("initiated_at")
-        .execute()
+        .order("initiated_at")))
         .data
         or []
     )
 
     result = []
 
+    # Steps and history are fetched for every workflow in two batched queries
+    # instead of two queries per workflow.
+    workflow_ids = [UUID(row["id"]) for row in rows]
+
+    steps_by_workflow, history_by_workflow = await asyncio.gather(
+        step_repo.list_steps_for_workflows(workflow_ids),
+        history_repo.list_workflow_history_for_workflows(workflow_ids),
+    )
+
     for row in rows:
         workflow_id = UUID(row["id"])
 
-        steps = await step_repo.list_workflow_steps(
-            workflow_id
-        )
+        steps = steps_by_workflow.get(str(workflow_id), [])
 
-        history = await history_repo.list_workflow_history(
-            workflow_id
-        )
+        history = history_by_workflow.get(str(workflow_id), [])
 
         result.append(
             {
@@ -290,23 +297,21 @@ async def decide_approval_step(
         from app.services.ap.approval_bridge import APApprovalBridge
 
         row = (
-            get_supabase()
+            (await execute(get_supabase()
             .table("approval_steps")
             .select("workflow_id")
             .eq("id", str(step_id))
-            .limit(1)
-            .execute()
+            .limit(1)))
             .data
         )
 
         if row:
             workflow = (
-                get_supabase()
+                (await execute(get_supabase()
                 .table("approval_workflows")
                 .select("document_id")
                 .eq("id", row[0]["workflow_id"])
-                .limit(1)
-                .execute()
+                .limit(1)))
                 .data
             )
 

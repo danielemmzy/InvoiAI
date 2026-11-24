@@ -57,25 +57,25 @@ async def _run_explicit_ap_workflow(document_id: UUID) -> None:
             except Exception as exc:
                 logging.getLogger(__name__).exception("AP GL coding failed for document %s", document_id)
                 database = get_supabase()
-                rows = database.table("documents").select("org_id,ap_status").eq("id", str(document_id)).limit(1).execute().data or []
+                rows = (await execute(database.table("documents").select("org_id,ap_status").eq("id", str(document_id)).limit(1))).data or []
                 if rows:
                     org_id = UUID(rows[0]["org_id"])
                     current = await state.get_status(document_id)
                     if current == InvoiceAPStatus.CODING:
                         await state.transition(document_id, org_id, InvoiceAPStatus.CODING_EXCEPTION, triggered_by="worker", reason="GL coding service failed")
-                    database.table("documents").update({
+                    (await execute(database.table("documents").update({
                         "status": "needs_review", "processing_step": "ap_coding_error",
                         "processing_message": "GL coding could not finish because a service error occurred. Your invoice and saved line data were retained. Correct any missing GL assignments, then retry the exception.",
                         "processing_progress": 85, "gl_coding_status": "needs_review",
                         "error_message": str(exc)[:500],
-                    }).eq("id", str(document_id)).eq("org_id", str(org_id)).execute()
-                    open_rows = database.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).eq("exception_type", "gl_coding_required").in_("status", ["open", "in_review", "escalated"]).limit(1).execute().data or []
+                    }).eq("id", str(document_id)).eq("org_id", str(org_id))))
+                    open_rows = (await execute(database.table("invoice_exceptions").select("id").eq("org_id", str(org_id)).eq("document_id", str(document_id)).eq("exception_type", "gl_coding_required").in_("status", ["open", "in_review", "escalated"]).limit(1))).data or []
                     if not open_rows:
-                        database.table("invoice_exceptions").insert({
+                        await execute(database.table("invoice_exceptions").insert({
                             "org_id": str(org_id), "document_id": str(document_id),
                             "exception_type": "gl_coding_required", "severity": "warning",
                             "title": "GL coding could not finish", "details": {"error": str(exc)[:500], "retryable": True},
-                        }).execute()
+                        }))
     finally:
         try:
             await lock.release()
@@ -114,7 +114,9 @@ async def _audit_finance_change(
         logging.getLogger(__name__).exception("Failed to audit %s for %s", action, resource_id)
 
 
-def _account_code_in_use(org_id: UUID, code: str, *, exclude_id: UUID | None = None) -> bool:
+from app.core.db import execute
+
+async def _account_code_in_use(org_id: UUID, code: str, *, exclude_id: UUID | None = None) -> bool:
     query = (
         db()
         .table("chart_of_accounts")
@@ -124,7 +126,9 @@ def _account_code_in_use(org_id: UUID, code: str, *, exclude_id: UUID | None = N
     )
     if exclude_id is not None:
         query = query.neq("id", str(exclude_id))
-    return bool(query.limit(1).execute().data)
+    # Offload the synchronous Supabase call; a direct execute() here blocked
+    # FastAPI's event loop for every account create/update.
+    return bool((await execute(query.limit(1))).data)
 
 class APRunRequest(BaseModel):
     purchase_order_id: UUID | None = None
@@ -203,13 +207,12 @@ async def upload_ap_reference_document(
             raise HTTPException(409, str(exc)) from exc
 
         existing_rows = (
-            db()
+            (await execute(db()
             .table("documents")
             .select("id,document_type,status,processing_step,external_source_data")
             .eq("org_id", str(ctx.org_id))
             .eq("id", str(exc.existing_document_id))
-            .limit(1)
-            .execute()
+            .limit(1)))
             .data
             or []
         )
@@ -227,9 +230,9 @@ async def upload_ap_reference_document(
         metadata = existing.get("external_source_data") or {}
         if metadata.get("ap_reference_type") != reference_type:
             metadata = {**metadata, "ap_reference_type": reference_type}
-            db().table("documents").update({"external_source_data": metadata}).eq(
+            (await execute(db().table("documents").update({"external_source_data": metadata}).eq(
                 "org_id", str(ctx.org_id)
-            ).eq("id", str(exc.existing_document_id)).execute()
+            ).eq("id", str(exc.existing_document_id))))
 
         document_id = UUID(str(existing["id"]))
         return {
@@ -261,7 +264,7 @@ async def convert_ap_reference_document(
 ):
     """Convert a processed PO/delivery-note document into a canonical selectable AP record."""
     database = db()
-    source_rows = database.table("documents").select("*").eq("org_id", str(ctx.org_id)).eq("id", str(source_document_id)).limit(1).execute().data or []
+    source_rows = (await execute(database.table("documents").select("*").eq("org_id", str(ctx.org_id)).eq("id", str(source_document_id)).limit(1))).data or []
     if not source_rows:
         raise HTTPException(404, "Reference document not found")
     source = source_rows[0]
@@ -271,49 +274,49 @@ async def convert_ap_reference_document(
     if source.get("processing_step") in {"ocr", "extraction", "reading", "classification"} or source.get("status") in {"ocr_running", "processing"}:
         return {"ready": False, "status": "processing", "source_document_id": str(source_document_id)}
 
-    lines = database.table("document_line_items").select("*").eq("org_id", str(ctx.org_id)).eq("document_id", str(source_document_id)).order("position").execute().data or []
+    lines = (await execute(database.table("document_line_items").select("*").eq("org_id", str(ctx.org_id)).eq("document_id", str(source_document_id)).order("position"))).data or []
     vendor_id = source.get("vendor_id")
     total = source.get("total_amount") or source.get("subtotal") or 0
     currency = source.get("currency") or "USD"
     number = source.get("document_number") or source.get("file_name") or f"REF-{str(source_document_id)[:8]}"
     if reference_type == "purchase_order":
-        existing = database.table("purchase_orders").select("id").eq("org_id", str(ctx.org_id)).eq("po_number", str(number)).limit(1).execute().data or []
+        existing = (await execute(database.table("purchase_orders").select("id").eq("org_id", str(ctx.org_id)).eq("po_number", str(number)).limit(1))).data or []
         if existing:
             return {"ready": True, "reference_type": reference_type, "source_document_id": str(source_document_id), "purchase_order_id": existing[0]["id"]}
         metadata = {"source_document_id": str(source_document_id), "source_file_name": source.get("file_name"), "line_items": [{k: v for k, v in line.items() if k in {"description", "quantity", "unit_price", "amount", "sku", "product_code", "position"}} for line in lines]}
-        created = database.table("purchase_orders").insert({
+        created = (await execute(database.table("purchase_orders").insert({
             "org_id": str(ctx.org_id), "vendor_id": vendor_id, "po_number": str(number),
             "amount": total, "currency": currency, "description": source.get("notes") or source.get("vendor_name"),
             "issued_date": source.get("document_date"), "expiry_date": source.get("due_date"),
             "is_open": True, "created_by": str(ctx.user_id), "metadata": metadata,
-        }).execute().data or []
+        }))).data or []
         if not created: raise HTTPException(500, "Could not create purchase order")
         return {"ready": True, "reference_type": reference_type, "source_document_id": str(source_document_id), "purchase_order_id": created[0]["id"]}
 
     po_id = (body or ReferenceConvertRequest()).purchase_order_id
     if not po_id:
         raise HTTPException(422, "purchase_order_id is required when converting a goods receipt")
-    po = database.table("purchase_orders").select("id,vendor_id").eq("org_id", str(ctx.org_id)).eq("id", str(po_id)).limit(1).execute().data or []
+    po = (await execute(database.table("purchase_orders").select("id,vendor_id").eq("org_id", str(ctx.org_id)).eq("id", str(po_id)).limit(1))).data or []
     if not po: raise HTTPException(404, "Purchase order not found")
-    existing = database.table("goods_receipts").select("id").eq("org_id", str(ctx.org_id)).eq("external_id", str(source_document_id)).limit(1).execute().data or []
+    existing = (await execute(database.table("goods_receipts").select("id").eq("org_id", str(ctx.org_id)).eq("external_id", str(source_document_id)).limit(1))).data or []
     if existing:
         return {"ready": True, "reference_type": reference_type, "source_document_id": str(source_document_id), "goods_receipt_id": existing[0]["id"]}
-    receipt = database.table("goods_receipts").insert({
+    receipt = (await execute(database.table("goods_receipts").insert({
         "org_id": str(ctx.org_id), "purchase_order_id": str(po_id), "vendor_id": po[0].get("vendor_id") or vendor_id,
         "receipt_number": str(number), "received_at": source.get("document_date") or datetime.now(UTC).isoformat(),
         "received_by": str(ctx.user_id), "status": "confirmed", "source": "uploaded_document", "external_id": str(source_document_id),
         "notes": source.get("file_name"),
-    }).execute().data or []
+    }))).data or []
     if not receipt: raise HTTPException(500, "Could not create goods receipt")
     receipt_id = receipt[0]["id"]
     if lines:
-        database.table("goods_receipt_lines").insert([{
+        (await execute(database.table("goods_receipt_lines").insert([{
             "goods_receipt_id": receipt_id,
             "description": line.get("description"), "sku": line.get("sku") or line.get("product_code"),
             "quantity_ordered": line.get("quantity"), "quantity_received": line.get("quantity") or 0,
             "quantity_accepted": line.get("quantity") or 0, "unit_price": line.get("unit_price"),
             "notes": f"Source document {source_document_id}",
-        } for line in lines]).execute()
+        } for line in lines])))
     return {"ready": True, "reference_type": reference_type, "source_document_id": str(source_document_id), "goods_receipt_id": receipt_id}
 
 
@@ -332,7 +335,7 @@ async def matching_purchase_orders(
     ctx: OrganizationContext = Depends(get_org_context),
     _: None = Depends(require_permission(VIEW_FINANCE)),
 ):
-    rows = db().table("purchase_orders").select("*, vendors(name)").eq("org_id", str(ctx.org_id)).eq("is_open", True).order("issued_date", desc=True).limit(100).execute().data or []
+    rows = (await execute(db().table("purchase_orders").select("*, vendors(name)").eq("org_id", str(ctx.org_id)).eq("is_open", True).order("issued_date", desc=True).limit(100))).data or []
     if vendor_id:
         rows = [r for r in rows if str(r.get("vendor_id")) == str(vendor_id)]
     return rows
@@ -346,7 +349,7 @@ async def list_exceptions(
     rows = await ExceptionService().list_open(ctx.org_id)
     payload = [r.model_dump(mode="json") for r in rows]
     document_ids = list({str(row.get("document_id")) for row in payload if row.get("document_id")})
-    documents = db().table("documents").select("id,document_number,vendor_name,file_name,total_amount,currency,ap_status").eq("org_id", str(ctx.org_id)).in_("id", document_ids).execute().data or [] if document_ids else []
+    documents = (await execute(db().table("documents").select("id,document_number,vendor_name,file_name,total_amount,currency,ap_status").eq("org_id", str(ctx.org_id)).in_("id", document_ids))).data or [] if document_ids else []
     by_id = {str(row["id"]): row for row in documents}
     for row in payload:
         row["document"] = by_id.get(str(row.get("document_id")))
@@ -402,13 +405,12 @@ async def document_codings(
     _: None = Depends(require_permission(VIEW_FINANCE)),
 ):
     rows = (
-        db()
+        (await execute(db()
         .table("invoice_codings")
         .select("*")
         .eq("org_id", str(ctx.org_id))
         .eq("document_id", str(document_id))
-        .order("created_at")
-        .execute()
+        .order("created_at")))
         .data
         or []
     )
@@ -422,42 +424,55 @@ async def approve_codings(
     _: None = Depends(require_permission(MANAGE_FINANCE)),
 ):
     rows = (
-        db()
+        (await execute(db()
         .table("invoice_codings")
         .select("id,status,gl_account_id,line_item_id")
         .eq("org_id", str(ctx.org_id))
-        .eq("document_id", str(document_id))
-        .execute()
+        .eq("document_id", str(document_id))))
         .data
         or []
     )
     if not rows:
         raise HTTPException(404, "No codings found")
-    line_items = db().table("document_line_items").select("id").eq(
+    line_items = (await execute(db().table("document_line_items").select("id").eq(
         "org_id", str(ctx.org_id)
-    ).eq("document_id", str(document_id)).execute().data or []
+    ).eq("document_id", str(document_id)))).data or []
     coding_line_ids = {str(row.get("line_item_id")) for row in rows if row.get("line_item_id")}
     if any(str(line.get("id")) not in coding_line_ids for line in line_items):
         raise HTTPException(409, "Assign an active postable account to every invoice line before approving coding.")
+    # Validate every referenced account in one query instead of one query per
+    # coding row.
+    account_ids = sorted(
+        {
+            str(row.get("gl_account_id"))
+            for row in rows
+            if row.get("gl_account_id")
+        }
+    )
+    accounts_by_id = {
+        str(account["id"]): account
+        for account in (
+            (await execute(db().table("chart_of_accounts").select(
+                "id,is_active,is_postable"
+            ).eq("org_id", str(ctx.org_id)).in_("id", account_ids))).data
+            or []
+        )
+    } if account_ids else {}
     for row in rows:
-        account = db().table("chart_of_accounts").select(
-            "id,is_active,is_postable"
-        ).eq("org_id", str(ctx.org_id)).eq(
-            "id", str(row.get("gl_account_id"))
-        ).limit(1).execute().data or []
-        if not account or not account[0].get("is_active") or not account[0].get("is_postable"):
+        account = accounts_by_id.get(str(row.get("gl_account_id")))
+        if not account or not account.get("is_active") or not account.get("is_postable"):
             raise HTTPException(409, "Assign an active postable account to every invoice line before approving coding.")
     if any(
         r.get("status") not in {"needs_review", "auto_coded", "approved"} for r in rows
     ):
         raise HTTPException(409, "Coding is not ready for approval")
-    db().table("invoice_codings").update(
+    (await execute(db().table("invoice_codings").update(
         {"status": "approved", "approved_by": str(ctx.user_id)}
-    ).eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).execute()
-    db().table("documents").update({"gl_coding_status": "approved"}).eq(
+    ).eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id))))
+    (await execute(db().table("documents").update({"gl_coding_status": "approved"}).eq(
         "org_id", str(ctx.org_id)
-    ).eq("id", str(document_id)).execute()
-    db().table("invoice_exceptions").update(
+    ).eq("id", str(document_id))))
+    await execute(db().table("invoice_exceptions").update(
         {
             "status": "resolved",
             "resolved_by": str(ctx.user_id),
@@ -468,16 +483,15 @@ async def approve_codings(
         "exception_type", "gl_coding_required"
     ).eq(
         "status", "open"
-    ).execute()
+    ))
     analysis = (
-        db()
+        (await execute(db()
         .table("document_analyses")
         .select("id")
         .eq("org_id", str(ctx.org_id))
         .eq("document_id", str(document_id))
         .order("created_at", desc=True)
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
     )
     analysis_id = UUID(analysis[0]["id"]) if analysis else None
@@ -506,12 +520,11 @@ async def save_line_coding(
     """
     database = db()
     account = (
-        database.table("chart_of_accounts")
+        (await execute(database.table("chart_of_accounts")
         .select("id,account_code,account_name,is_postable,is_active")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(body.gl_account_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
         or []
     )
@@ -537,13 +550,12 @@ async def save_line_coding(
     }
 
     existing = (
-        database.table("invoice_codings")
+        (await execute(database.table("invoice_codings")
         .select("id,gl_account_id,status")
         .eq("org_id", str(ctx.org_id))
         .eq("document_id", str(document_id))
         .eq("line_item_id", str(line_item_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
         or []
     )
@@ -556,31 +568,37 @@ async def save_line_coding(
     if existing:
         if changed_approved_coding:
             payload.update({"status": "needs_review", "approved_by": None})
-        database.table("invoice_codings").update(payload).eq("id", existing[0]["id"]).execute()
+        await execute(database.table("invoice_codings").update(payload).eq("id", existing[0]["id"]))
     else:
-        database.table("invoice_codings").insert(payload).execute()
+        await execute(database.table("invoice_codings").insert(payload))
 
     # Also persist on the line item for immediate UI feedback
-    database.table("document_line_items").update({
+    (await execute(database.table("document_line_items").update({
         "gl_account_id": str(body.gl_account_id),
         "gl_account_code": account[0]["account_code"],
         "gl_account_name": account[0]["account_name"],
-    }).eq("org_id", str(ctx.org_id)).eq("id", str(line_item_id)).execute()
+    }).eq("org_id", str(ctx.org_id)).eq("id", str(line_item_id))))
 
     if changed_approved_coding:
-        workflows = database.table("approval_workflows").select("id,status").eq(
+        workflows = (await execute(database.table("approval_workflows").select("id,status").eq(
             "org_id", str(ctx.org_id)
-        ).eq("document_id", str(document_id)).execute().data or []
-        for workflow in workflows:
-            if workflow.get("status") in {"pending", "in_review", "approved"}:
-                database.table("approval_workflows").update({"status": "cancelled"}).eq(
-                    "org_id", str(ctx.org_id)
-                ).eq("id", str(workflow["id"])).execute()
-        database.table("documents").update({
+        ).eq("document_id", str(document_id)))).data or []
+        # Cancel every affected workflow in one statement rather than one
+        # update per workflow.
+        cancellable_ids = [
+            str(workflow["id"])
+            for workflow in workflows
+            if workflow.get("status") in {"pending", "in_review", "approved"}
+        ]
+        if cancellable_ids:
+            (await execute(database.table("approval_workflows").update({"status": "cancelled"}).eq(
+                "org_id", str(ctx.org_id)
+            ).in_("id", cancellable_ids)))
+        (await execute(database.table("documents").update({
             "status": "needs_review",
             "ap_status": "coding",
             "gl_coding_status": "needs_review",
-        }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+        }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id))))
         await _audit_finance_change(
             ctx,
             action="ap.gl_coding_changed_after_approval",
@@ -606,12 +624,11 @@ async def create_coding_rule(
     """
     database = db()
     account = (
-        database.table("chart_of_accounts")
+        (await execute(database.table("chart_of_accounts")
         .select("id,is_postable,is_active")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(body.gl_account_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
         or []
     )
@@ -639,7 +656,7 @@ async def create_coding_rule(
         "created_by": str(ctx.user_id),
     }
 
-    inserted = database.table("coding_rules").insert(payload).execute()
+    inserted = await execute(database.table("coding_rules").insert(payload))
     return inserted.data[0] if inserted.data else {"created": False}
 
 
@@ -669,12 +686,11 @@ async def list_coding_rules(
 ):
     """List coding rules for the organization."""
     rules = (
-        db()
+        (await execute(db()
         .table("coding_rules")
         .select("*")
         .eq("org_id", str(ctx.org_id))
-        .order("priority", desc=False)
-        .execute()
+        .order("priority", desc=False)))
         .data
         or []
     )
@@ -720,13 +736,12 @@ async def update_account(
     _: None = Depends(require_permission(MANAGE_FINANCE)),
 ):
     current = (
-        db()
+        (await execute(db()
         .table("chart_of_accounts")
         .select("*")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(account_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
         or []
     )
@@ -746,18 +761,17 @@ async def update_account(
 
     if "account_type" in editable and editable["account_type"] not in ACCOUNT_TYPES:
         raise HTTPException(400, "account_type must be one of: " + ", ".join(ACCOUNT_TYPES))
-    if "account_code" in editable and _account_code_in_use(
+    if "account_code" in editable and await _account_code_in_use(
         ctx.org_id, editable["account_code"], exclude_id=account_id
     ):
         raise HTTPException(409, f"Account code {editable['account_code']} already exists.")
 
     rows = (
-        db()
+        (await execute(db()
         .table("chart_of_accounts")
         .update(editable)
         .eq("org_id", str(ctx.org_id))
-        .eq("id", str(account_id))
-        .execute()
+        .eq("id", str(account_id))))
         .data
         or []
     )
@@ -783,13 +797,12 @@ async def deactivate_account(
 ):
     """Soft-deactivate an account; historical codings keep their reference."""
     current = (
-        db()
+        (await execute(db()
         .table("chart_of_accounts")
         .select("id,account_code,account_name,is_active")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(account_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
         or []
     )
@@ -797,12 +810,11 @@ async def deactivate_account(
         raise HTTPException(404, "Account not found.")
 
     rows = (
-        db()
+        (await execute(db()
         .table("chart_of_accounts")
         .update({"is_active": False})
         .eq("org_id", str(ctx.org_id))
-        .eq("id", str(account_id))
-        .execute()
+        .eq("id", str(account_id))))
         .data
         or []
     )
@@ -871,7 +883,7 @@ async def create_account(
     account_name = body.account_name.strip()
     if not account_code or not account_name:
         raise HTTPException(400, "account_code and account_name are required")
-    if _account_code_in_use(ctx.org_id, account_code):
+    if await _account_code_in_use(ctx.org_id, account_code):
         raise HTTPException(409, f"Account code {account_code} already exists.")
 
     payload = {
@@ -885,7 +897,7 @@ async def create_account(
         "is_postable": body.is_postable,
         "source": "manual",
     }
-    result = db().table("chart_of_accounts").insert(payload).execute().data[0]
+    result = (await execute(db().table("chart_of_accounts").insert(payload))).data[0]
     await ChartOfAccountsService().invalidate(ctx.org_id)
     await _audit_finance_change(
         ctx,
@@ -906,7 +918,7 @@ async def create_coding_rule(
     payload = dict(body)
     payload["org_id"] = str(ctx.org_id)
     payload["created_by"] = str(ctx.user_id)
-    return db().table("coding_rules").insert(payload).execute().data[0]
+    return (await execute(db().table("coding_rules").insert(payload))).data[0]
 
 
 @router.get("/email-address")
@@ -915,13 +927,12 @@ async def get_email_address(
     _: None = Depends(require_permission(VIEW_FINANCE)),
 ):
     rows = (
-        db()
+        (await execute(db()
         .table("ap_email_intake_addresses")
         .select("*")
         .eq("org_id", str(ctx.org_id))
         .eq("is_active", True)
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
         or []
     )
@@ -935,7 +946,7 @@ async def create_email_address(
 ):
     if ctx.role not in {OrgRole.OWNER, OrgRole.ADMIN}:
         raise HTTPException(status_code=403, detail="Only workspace administrators can manage the forwarding address.")
-    return manage_email_address(
+    return await manage_email_address(
         db(), org_id=ctx.org_id, user_id=ctx.user_id,
         domain=settings.ap_email_inbound_domain,
     )
@@ -948,7 +959,7 @@ async def rotate_email_address(
 ):
     if ctx.role not in {OrgRole.OWNER, OrgRole.ADMIN}:
         raise HTTPException(status_code=403, detail="Only workspace administrators can rotate the forwarding address.")
-    return manage_email_address(
+    return await manage_email_address(
         db(), org_id=ctx.org_id, user_id=ctx.user_id,
         domain=settings.ap_email_inbound_domain, rotate=True,
     )
@@ -968,12 +979,11 @@ async def prepare_ap_document(
     """
     database = db()
     rows = (
-        database.table("documents")
+        (await execute(database.table("documents")
         .select("id,document_type,intelligence_status,document_number,vendor_id,total_amount,currency")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(document_id))
-        .limit(1)
-        .execute().data or []
+        .limit(1))).data or []
     )
     if not rows:
         raise HTTPException(404, "Document not found")
@@ -982,12 +992,11 @@ async def prepare_ap_document(
         raise HTTPException(409, "Only invoice documents can be prepared for AP.")
 
     line_rows = (
-        database.table("document_line_items")
+        (await execute(database.table("document_line_items")
         .select("id")
         .eq("org_id", str(ctx.org_id))
         .eq("document_id", str(document_id))
-        .limit(1)
-        .execute().data or []
+        .limit(1))).data or []
     )
     fields_ready = bool(
         document.get("document_number")
@@ -1044,7 +1053,7 @@ async def select_ap_invoice(
     ctx: OrganizationContext = Depends(get_org_context),
     _: None = Depends(require_permission(MANAGE_FINANCE)),
 ):
-    row = db().table("documents").select("id,document_type,ap_enabled,ap_status").eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).limit(1).execute().data or []
+    row = (await execute(db().table("documents").select("id,document_type,ap_enabled,ap_status").eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).limit(1))).data or []
     if not row:
         raise HTTPException(404, "Document not found")
     if row[0].get("document_type") != "invoice":
@@ -1052,7 +1061,7 @@ async def select_ap_invoice(
     values = {"ap_enabled": True}
     if not row[0].get("ap_status"):
         values["ap_status"] = InvoiceAPStatus.RECEIVED.value
-    db().table("documents").update(values).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+    await execute(db().table("documents").update(values).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)))
     return {"selected": True, "document_id": str(document_id), "ap_enabled": True, "ap_status": values.get("ap_status", row[0].get("ap_status"))}
 
 
@@ -1067,12 +1076,11 @@ async def _prepare_invoice_for_ap(document_id: UUID) -> None:
     await get_container().ocr_worker.execute(document_id=document_id, mode="ap")
 
     row = (
-        db()
+        (await execute(db()
         .table("documents")
         .select("document_type")
         .eq("id", str(document_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
         or []
     )
@@ -1082,7 +1090,7 @@ async def _prepare_invoice_for_ap(document_id: UUID) -> None:
             f"AP automation stopped because this document was recognized as "
             f"{detected_type.replace('_', ' ')}, not an invoice."
         )
-        db().table("documents").update({
+        (await execute(db().table("documents").update({
             "ap_enabled": False,
             "ap_status": InvoiceAPStatus.MATCH_EXCEPTION.value,
             "match_status": "exception",
@@ -1090,7 +1098,7 @@ async def _prepare_invoice_for_ap(document_id: UUID) -> None:
             "processing_message": message,
             "processing_progress": 100,
             "error_message": message,
-        }).eq("id", str(document_id)).execute()
+        }).eq("id", str(document_id))))
         return
 
     await _run_explicit_ap_workflow(document_id)
@@ -1113,13 +1121,12 @@ async def run_ap(
     """
     database = db()
     row = (
-        database
+        (await execute(database
         .table("documents")
         .select("id,org_id,document_type,ap_enabled,ap_status,updated_at,purchase_order_id,goods_receipt_id,ap_match_mode,human_review_status")
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(document_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
     )
 
@@ -1136,8 +1143,8 @@ async def run_ap(
 
     request = body or APRunRequest()
 
-    line_rows = database.table("document_line_items").select("id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).limit(1).execute().data or []
-    current_invoice = database.table("documents").select("vendor_id,total_amount,currency,document_number").eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).limit(1).execute().data or []
+    line_rows = (await execute(database.table("document_line_items").select("id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).limit(1))).data or []
+    current_invoice = (await execute(database.table("documents").select("vendor_id,total_amount,currency,document_number").eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).limit(1))).data or []
     fields_ready = bool(
         document.get("document_type") == "invoice"
         and current_invoice
@@ -1156,11 +1163,11 @@ async def run_ap(
 
     # Validate all selected AP records belong to the same workspace.
     if request.purchase_order_id:
-        po = database.table("purchase_orders").select("id,vendor_id,currency,is_open").eq("org_id", str(ctx.org_id)).eq("id", str(request.purchase_order_id)).limit(1).execute().data or []
+        po = (await execute(database.table("purchase_orders").select("id,vendor_id,currency,is_open").eq("org_id", str(ctx.org_id)).eq("id", str(request.purchase_order_id)).limit(1))).data or []
         if not po:
             raise HTTPException(404, "Purchase order not found.")
     if request.goods_receipt_id:
-        receipt = database.table("goods_receipts").select("id,purchase_order_id,status").eq("org_id", str(ctx.org_id)).eq("id", str(request.goods_receipt_id)).limit(1).execute().data or []
+        receipt = (await execute(database.table("goods_receipts").select("id,purchase_order_id,status").eq("org_id", str(ctx.org_id)).eq("id", str(request.goods_receipt_id)).limit(1))).data or []
         if not receipt:
             raise HTTPException(404, "Goods receipt not found.")
         if request.purchase_order_id and str(receipt[0].get("purchase_order_id")) != str(request.purchase_order_id):
@@ -1168,14 +1175,14 @@ async def run_ap(
         if request.match_mode == "three_way" and receipt[0].get("status") not in {"confirmed", "complete"}:
             raise HTTPException(422, "The selected goods receipt must be confirmed or complete for 3-way matching.")
 
-    database.table("documents").update({
+    (await execute(database.table("documents").update({
         "purchase_order_id": str(request.purchase_order_id) if request.purchase_order_id else None,
         "goods_receipt_id": str(request.goods_receipt_id) if request.goods_receipt_id else None,
         "ap_match_mode": request.match_mode,
-    }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+    }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id))))
 
     if not fields_ready:
-        database.table("documents").update({
+        (await execute(database.table("documents").update({
             "ap_enabled": True,
             "match_status": "pending",
             "gl_coding_status": "pending",
@@ -1183,7 +1190,7 @@ async def run_ap(
             "processing_step": "ap_preparing",
             "processing_message": "Preparing invoice data for Accounts Payable",
             "processing_progress": 10,
-        }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+        }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id))))
         asyncio.create_task(_prepare_invoice_for_ap(document_id), name=f"ap-prepare:{document_id}")
         return {"queued": True, "ap_enabled": True, "ap_status": InvoiceAPStatus.VALIDATING.value, "document_id": str(document_id), "match_mode": request.match_mode, "preparing": True}
 
@@ -1200,13 +1207,13 @@ async def run_ap(
         if context_changed:
             # Changing matching inputs is an explicit restart. Keep it auditable and
             # reset progress only for this new context, never on an accidental repeat.
-            database.table("documents").update({
+            (await execute(database.table("documents").update({
                 "ap_enabled": True, "match_status": "pending", "gl_coding_status": "pending",
                 "ap_status": InvoiceAPStatus.VALIDATING.value,
                 "processing_step": "ap_validating",
                 "processing_message": "Validating invoice and selected matching context…",
                 "processing_progress": 10, "error_message": None,
-            }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+            }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id))))
             asyncio.create_task(_run_explicit_ap_workflow(document_id), name=f"ap-workflow:{document_id}")
             return {"queued": True, "ap_enabled": True, "ap_status": InvoiceAPStatus.VALIDATING.value, "document_id": str(document_id), "purchase_order_id": request.purchase_order_id, "goods_receipt_id": request.goods_receipt_id, "match_mode": request.match_mode}
 
@@ -1225,18 +1232,17 @@ async def run_ap(
             # A user explicitly asked again and the row has not moved for a full
             # lease: treat it as abandoned and resume from the current step.
             await APRecoveryService(database).clear(document_id)
-            database.table("documents").update({"error_message": None}).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+            await execute(database.table("documents").update({"error_message": None}).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)))
             asyncio.create_task(_run_explicit_ap_workflow(document_id), name=f"ap-workflow:{document_id}")
             return {"queued": True, "recovered": True, "ap_enabled": True, "ap_status": status, "document_id": str(document_id), "purchase_order_id": request.purchase_order_id, "goods_receipt_id": request.goods_receipt_id, "match_mode": request.match_mode}
         if status in {InvoiceAPStatus.MATCH_EXCEPTION.value, InvoiceAPStatus.CODING_EXCEPTION.value, InvoiceAPStatus.ON_HOLD.value}:
             open_exceptions = (
-                database.table("invoice_exceptions")
+                (await execute(database.table("invoice_exceptions")
                 .select("id")
                 .eq("org_id", str(ctx.org_id))
                 .eq("document_id", str(document_id))
                 .in_("status", ["open", "in_review", "escalated"])
-                .limit(1)
-                .execute()
+                .limit(1)))
                 .data
                 or []
             )
@@ -1252,14 +1258,14 @@ async def run_ap(
                     if restart_from_matching
                     else InvoiceAPStatus.CODING
                 )
-                database.table("documents").update({
+                (await execute(database.table("documents").update({
                     "match_status": "pending",
                     "gl_coding_status": "pending",
                     "processing_step": "ap_validating" if restart_from_matching else "ap_coding",
                     "processing_message": "Retrying Accounts Payable after an abandoned run…",
                     "processing_progress": 10 if restart_from_matching else 70,
                     "error_message": None,
-                }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+                }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id))))
                 await InvoiceStateMachine(database).transition(
                     document_id,
                     ctx.org_id,
@@ -1274,7 +1280,7 @@ async def run_ap(
         return {"queued": False, "ap_enabled": True, "ap_status": status, "document_id": str(document_id), "purchase_order_id": request.purchase_order_id, "goods_receipt_id": request.goods_receipt_id, "match_mode": request.match_mode}
 
     # Mark the document as explicitly enrolled in AP first.
-    database.table("documents").update({
+    (await execute(database.table("documents").update({
         "ap_enabled": True,
         "match_status": "pending",
         "gl_coding_status": "pending",
@@ -1282,7 +1288,7 @@ async def run_ap(
         "processing_message": "Validating invoice and selected matching context…",
         "processing_progress": 10,
         "error_message": None,
-    }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+    }).eq("org_id", str(ctx.org_id)).eq("id", str(document_id))))
 
     # Use the canonical state machine so the transition is audited.
     
@@ -1318,7 +1324,7 @@ async def submit_ap_for_approval(
 ):
     """Explicit control gate: only submit after matching and GL coding are complete."""
     database = db()
-    rows = database.table("documents").select("id,ap_status,gl_coding_status,ap_enabled").eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).limit(1).execute().data or []
+    rows = (await execute(database.table("documents").select("id,ap_status,gl_coding_status,ap_enabled").eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).limit(1))).data or []
     if not rows:
         raise HTTPException(404, "Invoice not found.")
     document = rows[0]
@@ -1330,13 +1336,13 @@ async def submit_ap_for_approval(
         raise HTTPException(409, "The invoice is not ready to submit. Finish matching and resolve all exceptions first.")
     if document.get("gl_coding_status") not in {"auto_coded", "approved"}:
         raise HTTPException(409, "GL coding is not complete. Assign or review all line-item accounts first.")
-    open_exceptions = database.table("invoice_exceptions").select("id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).in_("status", ["open", "in_review", "escalated"]).execute().data or []
+    open_exceptions = (await execute(database.table("invoice_exceptions").select("id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).in_("status", ["open", "in_review", "escalated"]))).data or []
     if open_exceptions:
         raise HTTPException(409, "Resolve or formally waive all open AP exceptions before submitting for approval.")
-    codings = database.table("invoice_codings").select("id,status,gl_account_id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).execute().data or []
+    codings = (await execute(database.table("invoice_codings").select("id,status,gl_account_id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)))).data or []
     if not codings or any(not row.get("gl_account_id") or row.get("status") not in {"auto_coded", "approved"} for row in codings):
         raise HTTPException(409, "Every invoice line must have a valid GL account before approval submission.")
-    analyses = database.table("document_analyses").select("id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).order("created_at", desc=True).limit(1).execute().data or []
+    analyses = (await execute(database.table("document_analyses").select("id").eq("org_id", str(ctx.org_id)).eq("document_id", str(document_id)).order("created_at", desc=True).limit(1))).data or []
     if not analyses:
         raise HTTPException(409, "Document analysis is required before approval submission.")
     try:
@@ -1346,7 +1352,7 @@ async def submit_ap_for_approval(
     current = await InvoiceStateMachine(database).get_status(document_id)
     if current == InvoiceAPStatus.CODING:
         await InvoiceStateMachine(database).transition(document_id, ctx.org_id, InvoiceAPStatus.AWAITING_APPROVAL, actor_id=ctx.user_id, triggered_by="user", reason="User submitted completed AP workflow for approval")
-    database.table("documents").update({"processing_step": "ap_awaiting_approval", "processing_message": "Invoice submitted to the approval workflow.", "processing_progress": 100}).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)).execute()
+    await execute(database.table("documents").update({"processing_step": "ap_awaiting_approval", "processing_message": "Invoice submitted to the approval workflow.", "processing_progress": 100}).eq("org_id", str(ctx.org_id)).eq("id", str(document_id)))
     return {"submitted": True, "ap_status": (await InvoiceStateMachine(database).get_status(document_id)).value}
 
 
@@ -1357,15 +1363,14 @@ async def ap_status(
     _: None = Depends(require_permission(VIEW_FINANCE)),
 ):
     row = (
-        db()
+        (await execute(db()
         .table("documents")
         .select(
             "id,ap_enabled,ap_status,ap_match_mode,match_status,two_way_match_passed,three_way_match_passed,purchase_order_id,goods_receipt_id,gl_coding_status,erp_bill_id,payment_ready_at,processing_step,processing_message,processing_progress,error_message,updated_at"
         )
         .eq("org_id", str(ctx.org_id))
         .eq("id", str(document_id))
-        .limit(1)
-        .execute()
+        .limit(1)))
         .data
     )
     if not row:

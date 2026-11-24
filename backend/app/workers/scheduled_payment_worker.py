@@ -14,6 +14,8 @@ from app.services.payment.payment_instruction_service import PaymentInstructionS
 logger = logging.getLogger(__name__)
 
 
+from app.core.db import execute
+
 class ScheduledPaymentWorker:
     """Release approved scheduled payments on/after their requested date.
 
@@ -28,9 +30,9 @@ class ScheduledPaymentWorker:
 
     async def run(self, limit: int = 100) -> dict[str, int]:
         today = datetime.now(UTC).date().isoformat()
-        rows = self.db.table("payment_instructions").select("id,org_id,document_id,scheduled_date,status").eq(
+        rows = (await execute(self.db.table("payment_instructions").select("id,org_id,document_id,scheduled_date,status").eq(
             "status", PaymentInstructionStatus.SCHEDULED.value
-        ).lte("scheduled_date", today).order("scheduled_date").limit(limit).execute().data or []
+        ).lte("scheduled_date", today).order("scheduled_date").limit(limit))).data or []
         processed = failed = blocked = 0
         for row in rows:
             org_id = UUID(row["org_id"])

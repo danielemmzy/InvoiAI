@@ -8,10 +8,10 @@ class InvoiceCommentRepository(BaseRepository):
     mapper = InvoiceCommentMapper
 
     async def list_for_document(self, org_id: UUID, document_id: UUID):
-        return self._many(
+        return self._many(await execute(
             self.table().select("*").eq("org_id", str(org_id)).eq("document_id", str(document_id))
-            .order("created_at").execute()
-        )
+            .order("created_at")
+        ))
 
     async def create_comment(self, comment: InvoiceComment | dict):
         return await self.create(comment)

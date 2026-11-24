@@ -27,6 +27,7 @@ from app.core.enum.database import (
     RiskLevel,
 )
 from datetime import datetime, UTC
+from app.core.db import execute
 
 
 class AnalysisRepository(BaseRepository):
@@ -53,13 +54,12 @@ class AnalysisRepository(BaseRepository):
         idempotent when workers retry.
         """
 
-        return (
+        return await execute(
             self.table()
             .upsert(
                 payload,
                 on_conflict="document_id",
             )
-            .execute()
         )
 
     async def update_analysis(
@@ -71,7 +71,7 @@ class AnalysisRepository(BaseRepository):
         Update analysis metadata.
         """
 
-        return self.table().update(payload).eq("id", analysis_id).execute()
+        return await execute(self.table().update(payload).eq("id", analysis_id))
 
     async def delete_analysis(
         self,
@@ -83,7 +83,7 @@ class AnalysisRepository(BaseRepository):
         Normally only used internally.
         """
 
-        return self.table().delete().eq("id", analysis_id).execute()
+        return await execute(self.table().delete().eq("id", analysis_id))
 
         # =========================================================
 
@@ -98,7 +98,7 @@ class AnalysisRepository(BaseRepository):
         Retrieve an analysis by ID.
         """
 
-        return self.table().select("*").eq("id", analysis_id).single().execute()
+        return await execute(self.table().select("*").eq("id", analysis_id).single())
 
     async def get_document_analysis(
         self,
@@ -108,13 +108,12 @@ class AnalysisRepository(BaseRepository):
         Retrieve the latest analysis for a document.
         """
 
-        return (
+        return await execute(
             self.table()
             .select("*")
             .eq("document_id", document_id)
             .order("created_at", desc=True)
             .limit(1)
-            .execute()
         )
 
     async def list_document_analyses(
@@ -125,12 +124,11 @@ class AnalysisRepository(BaseRepository):
         List all historical analyses for a document.
         """
 
-        return (
+        return await execute(
             self.table()
             .select("*")
             .eq("document_id", document_id)
             .order("created_at", desc=True)
-            .execute()
         )
 
     async def list_organization_analyses(
@@ -143,13 +141,12 @@ class AnalysisRepository(BaseRepository):
         List analyses for an organization.
         """
 
-        return (
+        return await execute(
             self.table()
             .select("*", count="exact")
             .eq("org_id", org_id)
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
 
         # =========================================================
@@ -168,7 +165,7 @@ class AnalysisRepository(BaseRepository):
         Persist a human review decision.
         """
 
-        return (
+        return await execute(
             self.table()
             .update(
                 {
@@ -179,7 +176,6 @@ class AnalysisRepository(BaseRepository):
                 }
             )
             .eq("id", analysis_id)
-            .execute()
         )
 
     async def clear_review(
@@ -190,7 +186,7 @@ class AnalysisRepository(BaseRepository):
         Remove review metadata.
         """
 
-        return (
+        return await execute(
             self.table()
             .update(
                 {
@@ -201,7 +197,6 @@ class AnalysisRepository(BaseRepository):
                 }
             )
             .eq("id", analysis_id)
-            .execute()
         )
 
         # =========================================================
@@ -217,7 +212,7 @@ class AnalysisRepository(BaseRepository):
         Count analyses for an organization.
         """
 
-        return self.table().select("id", count="exact").eq("org_id", org_id).execute()
+        return await execute(self.table().select("id", count="exact").eq("org_id", org_id))
 
     async def get_health_scores(
         self,
@@ -227,7 +222,7 @@ class AnalysisRepository(BaseRepository):
         Retrieve health scores for averaging.
         """
 
-        return self.table().select("health_score").eq("org_id", org_id).execute()
+        return await execute(self.table().select("health_score").eq("org_id", org_id))
 
     async def risk_distribution(
         self,
@@ -237,7 +232,7 @@ class AnalysisRepository(BaseRepository):
         Retrieve risk levels for distribution charts.
         """
 
-        return self.table().select("risk_level").eq("org_id", org_id).execute()
+        return await execute(self.table().select("risk_level").eq("org_id", org_id))
 
     async def recommendation_distribution(
         self,
@@ -247,7 +242,7 @@ class AnalysisRepository(BaseRepository):
         Retrieve recommendation values for analytics.
         """
 
-        return self.table().select("recommendation").eq("org_id", org_id).execute()
+        return await execute(self.table().select("recommendation").eq("org_id", org_id))
 
         # =========================================================
 
@@ -262,12 +257,11 @@ class AnalysisRepository(BaseRepository):
         Check whether a document already has at least one analysis.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("id", count="exact")
             .eq("document_id", document_id)
             .limit(1)
-            .execute()
         )
 
         return (response.count or 0) > 0
@@ -280,13 +274,12 @@ class AnalysisRepository(BaseRepository):
         Retrieve the latest analysis ID for a document.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("document_id", document_id)
             .order("created_at", desc=True)
             .limit(1)
-            .execute()
         )
 
         if not response.data:
@@ -302,13 +295,12 @@ class AnalysisRepository(BaseRepository):
         Retrieve the latest analysis version for a document.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("analysis_version")
             .eq("document_id", document_id)
             .order("created_at", desc=True)
             .limit(1)
-            .execute()
         )
 
         if not response.data:
@@ -325,7 +317,7 @@ class AnalysisRepository(BaseRepository):
         """
 
         response = (
-            self.table().select("reviewed_at").eq("id", analysis_id).single().execute()
+            await execute(self.table().select("reviewed_at").eq("id", analysis_id).single())
         )
 
         return response.data.get("reviewed_at") is not None

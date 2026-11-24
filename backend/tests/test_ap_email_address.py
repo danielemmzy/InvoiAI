@@ -50,11 +50,12 @@ def setup_rpc(db):
 
 
 @pytest.mark.parametrize("rotate", [False, True])
-def test_address_management_uses_secure_transaction_rpc(rotate):
+@pytest.mark.asyncio
+async def test_address_management_uses_secure_transaction_rpc(rotate):
     db = RPCDatabase()
     org_id, user_id = uuid4(), uuid4()
 
-    result = manage_email_address(db, org_id=org_id, user_id=user_id, domain="inbound.example.com", rotate=rotate)
+    result = await manage_email_address(db, org_id=org_id, user_id=user_id, domain="inbound.example.com", rotate=rotate)
 
     assert db.calls[0][0] == "manage_ap_email_intake_address"
     params = db.calls[0][1]

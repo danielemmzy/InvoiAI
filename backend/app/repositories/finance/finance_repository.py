@@ -38,6 +38,7 @@ from app.mappers.finance_mapper import (
     RecurringItemMapper,
 )
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class IncomeRepository(BaseRepository):
@@ -54,14 +55,13 @@ class IncomeRepository(BaseRepository):
         limit: int = 100,
         offset: int = 0,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .order("received_date", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
         return self._many(response)
 
@@ -72,14 +72,13 @@ class IncomeRepository(BaseRepository):
         month_start: date,
         month_end: date,
     ) -> float:
-        response = (
+        response = await execute(
             self.table()
             .select("amount")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .gte("received_date", month_start.isoformat())
             .lte("received_date", month_end.isoformat())
-            .execute()
         )
         rows = self.raw_many(response)
         return sum(float(r.get("amount", 0)) for r in rows)
@@ -99,14 +98,13 @@ class ExpenseRepository(BaseRepository):
         limit: int = 100,
         offset: int = 0,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .order("expense_date", desc=True)
             .range(offset, offset + limit - 1)
-            .execute()
         )
         return self._many(response)
 
@@ -117,14 +115,13 @@ class ExpenseRepository(BaseRepository):
         month_start: date,
         month_end: date,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .gte("expense_date", month_start.isoformat())
             .lte("expense_date", month_end.isoformat())
-            .execute()
         )
         return self._many(response)
 
@@ -135,15 +132,14 @@ class ExpenseRepository(BaseRepository):
         month_start: date,
         month_end: date,
     ) -> dict[str, float]:
-        rows = self.raw_many(
+        rows = self.raw_many(await execute(
             self.table()
             .select("category, amount")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .gte("expense_date", month_start.isoformat())
             .lte("expense_date", month_end.isoformat())
-            .execute()
-        )
+        ))
         totals: dict[str, float] = {}
         for row in rows:
             category = row.get("category", "other")
@@ -163,7 +159,7 @@ class BudgetRepository(BaseRepository):
         period_month: date,
         default_limit,
     ):
-        existing = self.raw_many(
+        existing = self.raw_many(await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
@@ -171,8 +167,7 @@ class BudgetRepository(BaseRepository):
             .eq("category", category)
             .eq("period_month", period_month.isoformat())
             .limit(1)
-            .execute()
-        )
+        ))
         if existing:
             return self.mapper.to_domain(existing[0])
 
@@ -193,13 +188,12 @@ class BudgetRepository(BaseRepository):
         owner_id: UUID,
         period_month: date,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .eq("period_month", period_month.isoformat())
-            .execute()
         )
         return self._many(response)
 
@@ -217,14 +211,13 @@ class BudgetRepository(BaseRepository):
         *,
         limit: int = 5000,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("period_month", period_month.isoformat())
             .order("owner_type")
             .order("owner_id")
             .limit(limit)
-            .execute()
         )
         return self._many(response)
 
@@ -238,13 +231,12 @@ class RecurringItemRepository(BaseRepository):
         owner_type: OwnerType,
         owner_id: UUID,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .eq("is_active", True)
-            .execute()
         )
         return self._many(response)
 
@@ -254,13 +246,12 @@ class RecurringItemRepository(BaseRepository):
         *,
         limit: int = 5000,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("is_active", True)
             .order("next_due_date")
             .limit(limit)
-            .execute()
         )
         return self._many(response)
 
@@ -274,12 +265,11 @@ class DebtRepository(BaseRepository):
         owner_type: OwnerType,
         owner_id: UUID,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
-            .execute()
         )
         return self._many(response)
 
@@ -293,13 +283,12 @@ class GoalRepository(BaseRepository):
         owner_type: OwnerType,
         owner_id: UUID,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .eq("status", "active")
-            .execute()
         )
         return self._many(response)
 
@@ -309,13 +298,12 @@ class GoalRepository(BaseRepository):
         *,
         limit: int = 5000,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("status", "active")
             .order("target_date")
             .limit(limit)
-            .execute()
         )
         return self._many(response)
 
@@ -332,13 +320,12 @@ class AllocationPlanRepository(BaseRepository):
         owner_type: OwnerType,
         owner_id: UUID,
     ):
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("owner_type", owner_type.value)
             .eq("owner_id", str(owner_id))
             .order("created_at", desc=True)
             .limit(1)
-            .execute()
         )
         return self._one(response)

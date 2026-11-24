@@ -21,6 +21,7 @@ from app.core.auth import get_current_user, require_verified_user
 from app.core.authorization import require_permission
 from app.core.config import settings
 from app.core.container import get_container
+from app.core.db import execute, gather_queries
 from app.core.enum.database import DocumentType, DocumentStatus, RecommendationType
 from app.core.limiter import limiter
 from app.core.ocm import get_org_context
@@ -378,25 +379,12 @@ async def list_documents(
             detail="Search cannot contain commas or parentheses.",
         )
 
-    total_query = (
-        get_supabase().table("documents")
-        .select("id", count="exact", head=True)
-        .eq("org_id", str(ctx.org_id))
-        .eq("is_archived", False)
-    )
-    if industry:
-        total_query = total_query.eq("industry", industry)
-    if query and (term := query.strip()):
-        total_query = total_query.or_(
-            f"document_number.ilike.*{term}*,vendor_name.ilike.*{term}*"
-        )
-    total_result = total_query.execute()
-    response.headers["X-Total-Count"] = str(total_result.count or 0)
-
-    documents = (
-        await get_container()
-        .document_service
-        .list_documents(
+    # One round trip returns the page rows *and* the exact total. A separate
+    # ``head=True`` count repeated the same filter scan for no extra benefit.
+    rows, total = await (
+        get_container()
+        .document_repository
+        .list_document_rows(
             ctx.org_id,
             limit=limit,
             offset=offset,
@@ -404,16 +392,31 @@ async def list_documents(
             query=query,
         )
     )
+    response.headers["X-Total-Count"] = str(total)
 
+    documents = DocumentMapper.to_domain_list(rows)
     responses = [DocumentMapper.to_response(item) for item in documents]
     if not responses:
         return responses
 
     ids = [str(item.id) for item in responses]
     database = get_supabase()
-    line_rows = database.table("document_line_items").select("document_id,quantity").eq("org_id", str(ctx.org_id)).in_("document_id", ids).execute().data or []
-    coding_rows = database.table("invoice_codings").select("document_id,gl_account_id,line_item_id").eq("org_id", str(ctx.org_id)).in_("document_id", ids).execute().data or []
-    capture_rows = database.table("documents").select("id,classification_confidence,classification_reason,classified_at,human_review_status,intelligence_status,capture_status,capture_progress,capture_error,capture_overrides").eq("org_id", str(ctx.org_id)).in_("id", ids).execute().data or []
+
+    # Line items and GL codings are independent of each other, so they are
+    # fetched concurrently rather than one after the other.
+    line_result, coding_result = await gather_queries(
+        database.table("document_line_items")
+        .select("document_id,quantity")
+        .eq("org_id", str(ctx.org_id))
+        .in_("document_id", ids),
+        database.table("invoice_codings")
+        .select("document_id,gl_account_id,line_item_id")
+        .eq("org_id", str(ctx.org_id))
+        .in_("document_id", ids),
+    )
+    line_rows = line_result.data or []
+    coding_rows = coding_result.data or []
+
     line_by_doc = {}
     for row in line_rows:
         line_by_doc.setdefault(str(row["document_id"]), []).append(row)
@@ -422,27 +425,54 @@ async def list_documents(
         key = str(row["document_id"])
         if key not in coding_by_doc or row.get("line_item_id") is None:
             coding_by_doc[key] = row
-    capture_by_doc = {str(row["id"]): row for row in capture_rows}
-    enriched = []
+
+    # Capture and classification columns were already returned by the page
+    # query (``select("*")``), so they are read from those rows instead of
+    # re-querying the same documents.
+    capture_by_doc = {str(row.get("id")): row for row in rows}
+
+    # Collect the referenced GL accounts first, then resolve them in one batch
+    # instead of one query per document (the previous N+1).
+    resolved: list[tuple[DocumentResponse, str | None, str | None, str | None]] = []
+    missing_account_ids: set[str] = set()
     for item in responses:
-        key = str(item.id)
-        lines = line_by_doc.get(key, [])
-        coding = coding_by_doc.get(key) or {}
-        capture = capture_by_doc.get(key) or {}
-        total_qty = sum((float(row.get("quantity") or 0) for row in lines), 0.0)
-        payload = item.model_dump(mode="json")
+        capture = capture_by_doc.get(str(item.id)) or {}
         overrides = capture.get("capture_overrides") or {}
         account = overrides.get("account") if isinstance(overrides, dict) else {}
         if not isinstance(account, dict):
             account = {}
+        coding = coding_by_doc.get(str(item.id)) or {}
         account_id = account.get("id") or coding.get("gl_account_id")
         account_code = account.get("code")
         account_name = account.get("name")
+        account_key = str(account_id) if account_id else None
+        if account_key and (not account_code or not account_name):
+            missing_account_ids.add(account_key)
+        resolved.append((item, account_key, account_code, account_name))
+
+    accounts_by_id: dict[str, dict] = {}
+    if missing_account_ids:
+        account_result = await execute(
+            database.table("chart_of_accounts")
+            .select("id,account_code,account_name")
+            .eq("org_id", str(ctx.org_id))
+            .in_("id", sorted(missing_account_ids))
+        )
+        accounts_by_id = {
+            str(row["id"]): row for row in (account_result.data or [])
+        }
+
+    enriched = []
+    for item, account_id, account_code, account_name in resolved:
+        key = str(item.id)
+        lines = line_by_doc.get(key, [])
+        capture = capture_by_doc.get(key) or {}
+        total_qty = sum((float(row.get("quantity") or 0) for row in lines), 0.0)
+        payload = item.model_dump(mode="json")
         if account_id and (not account_code or not account_name):
-            account_rows = database.table("chart_of_accounts").select("id,account_code,account_name").eq("org_id", str(ctx.org_id)).eq("id", str(account_id)).limit(1).execute().data or []
-            if account_rows:
-                account_code = account_code or account_rows[0].get("account_code")
-                account_name = account_name or account_rows[0].get("account_name")
+            account_row = accounts_by_id.get(account_id) or {}
+            account_code = account_code or account_row.get("account_code")
+            account_name = account_name or account_row.get("account_name")
         payload.update({
             "total_quantity": total_qty,
             "line_item_count": len(lines),
@@ -475,7 +505,7 @@ async def get_document_workflow(
         ) from exc
 
     row = (
-        get_supabase()
+        (await execute(get_supabase()
         .table("documents")
         .select(
             "id,"
@@ -493,8 +523,7 @@ async def get_document_workflow(
         )
         .eq("id", str(did))
         .eq("org_id", str(ctx.org_id))
-        .single()
-        .execute()
+        .single()))
         .data
     )
 
@@ -574,30 +603,57 @@ async def get_document_intelligence(
             "actions": [],
         }
 
-    # Terminal requests are infrequent. Refresh the complete document only now.
-    full_rows = (
-        database.table("documents")
-        .select(
-            "id,org_id,document_type,industry,file_name,file_url,file_type,status,pipeline_stage,"
-            "workflow_route,processing_step,processing_message,processing_progress,"
-            "error_message,validation_warnings,human_review_status,intelligence_status,capture_status,capture_progress,capture_error,capture_overrides,vendor_id,vendor_name,document_number,"
-            "document_date,due_date,subtotal,tax_amount,tax_rate,discount_amount,"
-            "total_amount,amount_paid,amount_due,currency,payment_terms,payment_method,purchase_order_id,"
-            "ap_status,ap_enabled,sheets_url,created_at,updated_at"
-        )
-        .eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1).execute().data or []
+    # Terminal requests are infrequent. Refresh the complete document and its
+    # satellite rows together: they are independent reads, so running them one
+    # after another would cost a full round trip of latency each.
+    (
+        full_response,
+        ocr_response,
+        analysis_response,
+        line_items_response,
+        embedding_response,
+    ) = await asyncio.gather(
+        execute(
+            database.table("documents")
+            .select(
+                "id,org_id,document_type,industry,file_name,file_url,file_type,status,pipeline_stage,"
+                "workflow_route,processing_step,processing_message,processing_progress,"
+                "error_message,validation_warnings,human_review_status,intelligence_status,capture_status,capture_progress,capture_error,capture_overrides,vendor_id,vendor_name,document_number,"
+                "document_date,due_date,subtotal,tax_amount,tax_rate,discount_amount,"
+                "total_amount,amount_paid,amount_due,currency,payment_terms,payment_method,purchase_order_id,"
+                "ap_status,ap_enabled,sheets_url,created_at,updated_at"
+            )
+            .eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1)
+        ),
+        execute(
+            database.table("ocr_results").select(
+                "id,raw_text,page_count,pages,tables_detected,key_value_pairs,language_detected,"
+                "is_handwritten,is_scanned,has_tables,has_signatures,image_quality,engine,engine_version,"
+                "confidence_score,processing_ms,tokens_used,created_at"
+            ).eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
+            .order("created_at", desc=True).limit(1)
+        ),
+        execute(
+            database.table("document_analyses").select("*")
+            .eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
+            .order("created_at", desc=True).limit(1)
+        ),
+        execute(
+            database.table("document_line_items").select("*")
+            .eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
+            .order("position")
+        ),
+        execute(
+            database.table("document_embeddings").select("id,model_used,created_at")
+            .eq("document_id", str(did)).limit(1)
+        ),
     )
+
+    full_rows = full_response.data or []
     if full_rows:
         doc = full_rows[0]
 
-    ocr_rows = (
-        database.table("ocr_results").select(
-            "id,raw_text,page_count,pages,tables_detected,key_value_pairs,language_detected,"
-            "is_handwritten,is_scanned,has_tables,has_signatures,image_quality,engine,engine_version,"
-            "confidence_score,processing_ms,tokens_used,created_at"
-        ).eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
-        .order("created_at", desc=True).limit(1).execute().data or []
-    )
+    ocr_rows = ocr_response.data or []
     ocr = ocr_rows[0] if ocr_rows else None
     if ocr:
         raw_text = str(ocr.get("raw_text") or "").strip()
@@ -611,36 +667,29 @@ async def get_document_intelligence(
                 ]
                 if page_texts:
                     ocr["raw_text"] = "\n\n".join(page_texts)
-    analysis_rows = (
-        database.table("document_analyses").select("*")
-        .eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
-        .order("created_at", desc=True).limit(1).execute().data or []
-    )
+    analysis_rows = analysis_response.data or []
     analysis = analysis_rows[0] if analysis_rows else None
-    line_items = (
-        database.table("document_line_items").select("*")
-        .eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
-        .order("position").execute().data or []
-    )
-    embedding_rows = (
-        database.table("document_embeddings").select("id,model_used,created_at")
-        .eq("document_id", str(did)).limit(1).execute().data or []
-    )
+    line_items = line_items_response.data or []
+    embedding_rows = embedding_response.data or []
     vendor = None
     vendor_embedding_ready = False
     if doc.get("vendor_id"):
-        vendor_rows = (
-            database.table("vendors").select(
-                "id,name,risk_score,risk_level,is_verified,is_blocked,total_spend,average_spend,"
-                "invoice_count,fraud_flags,anomaly_count,ai_summary,ai_risk_explanation"
-            ).eq("id", str(doc["vendor_id"])).eq("org_id", str(ctx.org_id))
-            .limit(1).execute().data or []
+        vendor_response, vendor_embedding_response = await asyncio.gather(
+            execute(
+                database.table("vendors").select(
+                    "id,name,risk_score,risk_level,is_verified,is_blocked,total_spend,average_spend,"
+                    "invoice_count,fraud_flags,anomaly_count,ai_summary,ai_risk_explanation"
+                ).eq("id", str(doc["vendor_id"])).eq("org_id", str(ctx.org_id))
+                .limit(1)
+            ),
+            execute(
+                database.table("vendor_embeddings").select("id")
+                .eq("vendor_id", str(doc["vendor_id"])).limit(1)
+            ),
         )
+        vendor_rows = vendor_response.data or []
         vendor = vendor_rows[0] if vendor_rows else None
-        vendor_embedding_ready = bool(
-            database.table("vendor_embeddings").select("id")
-            .eq("vendor_id", str(doc["vendor_id"])).limit(1).execute().data or []
-        )
+        vendor_embedding_ready = bool(vendor_embedding_response.data or [])
     confidence = float((ocr or {}).get("confidence_score") or 0)
     kv = (ocr or {}).get("key_value_pairs") or {}
     structured_data = {
@@ -714,7 +763,7 @@ async def document_capture_options(
     _permission: None = Depends(require_permission(VIEW_DOCUMENTS)),
 ):
     try:
-        options = DocumentCaptureService().options(org_id=ctx.org_id, document_id=document_id, field=field, query=q)
+        options = await DocumentCaptureService().options(org_id=ctx.org_id, document_id=document_id, field=field, query=q)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return {"field": field, "options": options}
@@ -765,11 +814,12 @@ async def analyze_document(
         raise HTTPException(status_code=400, detail="Invalid document id") from exc
 
     database = get_supabase()
-    rows = (
+    response = await execute(
         database.table("documents")
         .select("id,status,human_review_status,intelligence_status,processing_step,is_archived,ap_enabled,ap_status")
-        .eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1).execute().data or []
+        .eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1)
     )
+    rows = response.data or []
     if not rows or rows[0].get("is_archived"):
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -786,13 +836,15 @@ async def analyze_document(
     if document.get("intelligence_status") in {"queued", "processing"}:
         return {"queued": False, "document_id": str(did), "intelligence_status": document.get("intelligence_status")}
 
-    database.table("documents").update({
-        "intelligence_status": "queued",
-        "processing_step": "queued",
-        "processing_message": "Document Intelligence is queued",
-        "processing_progress": 0,
-        "error_message": None,
-    }).eq("id", str(did)).eq("org_id", str(ctx.org_id)).execute()
+    await execute(
+        database.table("documents").update({
+            "intelligence_status": "queued",
+            "processing_step": "queued",
+            "processing_message": "Document Intelligence is queued",
+            "processing_progress": 0,
+            "error_message": None,
+        }).eq("id", str(did)).eq("org_id", str(ctx.org_id))
+    )
 
     _schedule_ocr(did)
     return {"queued": True, "document_id": str(did), "intelligence_status": "queued"}
@@ -815,19 +867,26 @@ async def review_document(
         raise HTTPException(status_code=400, detail="Invalid document id") from exc
 
     database = get_supabase()
-    if not (database.table("documents").select("id").eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1).execute().data or []):
+    document_response, analyses_response = await asyncio.gather(
+        execute(
+            database.table("documents").select("id")
+            .eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1)
+        ),
+        execute(
+            database.table("document_analyses").select("id")
+            .eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
+            .order("created_at", desc=True).limit(1)
+        ),
+    )
+    if not (document_response.data or []):
         raise HTTPException(status_code=404, detail="Document not found")
 
-    analyses = (
-        database.table("document_analyses").select("id")
-        .eq("document_id", str(did)).eq("org_id", str(ctx.org_id))
-        .order("created_at", desc=True).limit(1).execute().data or []
-    )
+    analyses = analyses_response.data or []
 
     # Human intake acceptance is deliberately independent from Document
     # Intelligence. An upload can be accepted before any AI analysis exists.
     if decision == RecommendationType.REJECT:
-        database.table("documents").update({"human_review_status": "declined"}).eq("id", str(did)).eq("org_id", str(ctx.org_id)).execute()
+        await execute(database.table("documents").update({"human_review_status": "declined"}).eq("id", str(did)).eq("org_id", str(ctx.org_id)))
         if analyses:
             await get_container().analysis_repository.submit_review(
                 analysis_id=str(analyses[0]["id"]), reviewer_id=str(user.id), decision=decision,
@@ -850,9 +909,11 @@ async def review_document(
             analysis_id=str(analyses[0]["id"]), reviewer_id=str(user.id), decision=decision,
         )
 
-    database.table("documents").update({
-        "human_review_status": "accepted",
-    }).eq("id", str(did)).eq("org_id", str(ctx.org_id)).execute()
+    await execute(
+        database.table("documents").update({
+            "human_review_status": "accepted",
+        }).eq("id", str(did)).eq("org_id", str(ctx.org_id))
+    )
     if not analyses:
         await get_container().document_repository.update_document_status(did, DocumentStatus.APPROVED)
     return {
@@ -1083,7 +1144,7 @@ async def rerun_document_ocr(
     if document is None or document.org_id != ctx.org_id or getattr(document, "is_archived", False):
         raise HTTPException(status_code=404, detail="Document not found")
 
-    row = get_supabase().table("documents").select("human_review_status,ap_enabled,ap_status").eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1).execute().data or []
+    row = (await execute(get_supabase().table("documents").select("human_review_status,ap_enabled,ap_status").eq("id", str(did)).eq("org_id", str(ctx.org_id)).limit(1))).data or []
     if not row or row[0].get("human_review_status") != "accepted":
         raise HTTPException(status_code=409, detail="Accept the document before running Document Intelligence.")
     if ap_owns_document_progress(
@@ -1094,13 +1155,15 @@ async def rerun_document_ocr(
             status_code=409,
             detail="This invoice is managed by Accounts Payable. Resume or resolve the AP workflow instead of starting Document Intelligence.",
         )
-    get_supabase().table("documents").update({
-        "intelligence_status": "queued",
-        "processing_step": "queued",
-        "processing_message": "Document Intelligence is queued",
-        "processing_progress": 0,
-        "error_message": None,
-    }).eq("id", str(did)).eq("org_id", str(ctx.org_id)).execute()
+    await execute(
+        get_supabase().table("documents").update({
+            "intelligence_status": "queued",
+            "processing_step": "queued",
+            "processing_message": "Document Intelligence is queued",
+            "processing_progress": 0,
+            "error_message": None,
+        }).eq("id", str(did)).eq("org_id", str(ctx.org_id))
+    )
     _schedule_ocr(did)
     return {"ok": True, "document_id": str(did), "status": "queued"}
 

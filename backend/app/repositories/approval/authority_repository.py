@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 from app.core.supabase import get_supabase
+from app.core.db import execute
 
 class ApprovalAuthorityRepository:
     table_name = "approval_authorities"
@@ -12,20 +13,19 @@ class ApprovalAuthorityRepository:
     async def list_for_member(self, org_id: UUID, membership_id: UUID, approval_type: str | None = None):
         q = self._table().select("*").eq("org_id", str(org_id)).eq("membership_id", str(membership_id)).eq("is_active", True)
         if approval_type: q = q.eq("approval_type", approval_type)
-        return q.order("limit_amount").execute().data or []
+        return (await execute(q.order("limit_amount"))).data or []
 
     async def upsert(self, org_id: UUID, membership_id: UUID, data: dict):
         payload = {**data, "org_id": str(org_id), "membership_id": str(membership_id), "updated_at": datetime.now(UTC).isoformat()}
-        return self._table().upsert(payload, on_conflict="membership_id,approval_type,currency").execute().data[0]
+        return (await execute(self._table().upsert(payload, on_conflict="membership_id,approval_type,currency"))).data[0]
 
     async def deactivate(self, org_id: UUID, membership_id: UUID, approval_type: str):
-        response = (
+        response = await execute(
             self._table()
             .update({"is_active": False, "updated_at": datetime.now(UTC).isoformat()})
             .eq("org_id", str(org_id))
             .eq("membership_id", str(membership_id))
             .eq("approval_type", approval_type)
-            .execute()
         )
         return response.data or []
 

@@ -20,6 +20,7 @@ from app.models.domain.chat import (
 )
 
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class ChatRepository(BaseRepository):
@@ -89,7 +90,7 @@ class ChatRepository(BaseRepository):
         limit: int = 50,
     ) -> list[ChatSession]:
 
-        response = (
+        response = await execute(
             self.sessions()
             .select("*")
             .eq("user_id", str(user_id))
@@ -98,7 +99,6 @@ class ChatRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         old = self.mapper
@@ -114,7 +114,7 @@ class ChatRepository(BaseRepository):
         limit: int = 100,
     ) -> list[ChatSession]:
 
-        response = (
+        response = await execute(
             self.sessions()
             .select("*")
             .eq("org_id", str(org_id))
@@ -123,7 +123,6 @@ class ChatRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         old = self.mapper
@@ -170,12 +169,11 @@ class ChatRepository(BaseRepository):
         message: ChatMessage | dict,
     ) -> ChatMessage | None:
 
-        response = (
+        response = await execute(
             self.messages()
             .insert(
                 ChatMessageMapper.to_insert(message)
             )
-            .execute()
         )
 
         return ChatMessageMapper.to_domain(
@@ -188,12 +186,11 @@ class ChatRepository(BaseRepository):
         message_id: UUID,
     ) -> ChatMessage | None:
 
-        response = (
+        response = await execute(
             self.messages()
             .select("*")
             .eq("id", str(message_id))
             .limit(1)
-            .execute()
         )
 
         row = self.raw(response)
@@ -210,7 +207,7 @@ class ChatRepository(BaseRepository):
         session_id: UUID,
     ) -> list[ChatMessage]:
 
-        response = (
+        response = await execute(
             self.messages()
             .select("*")
             .eq("session_id", str(session_id))
@@ -218,7 +215,6 @@ class ChatRepository(BaseRepository):
                 "created_at",
                 desc=False,
             )
-            .execute()
         )
 
         return ChatMessageMapper.to_domain_list(
@@ -232,7 +228,7 @@ class ChatRepository(BaseRepository):
         limit: int = 20,
     ) -> list[ChatMessage]:
 
-        response = (
+        response = await execute(
             self.messages()
             .select("*")
             .eq("session_id", str(session_id))
@@ -241,7 +237,6 @@ class ChatRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         messages = ChatMessageMapper.to_domain_list(
@@ -257,7 +252,7 @@ class ChatRepository(BaseRepository):
         limit: int = 100,
     ) -> list[ChatMessage]:
 
-        response = (
+        response = await execute(
             self.messages()
             .select("*")
             .eq("org_id", str(org_id))
@@ -266,7 +261,6 @@ class ChatRepository(BaseRepository):
                 desc=True,
             )
             .limit(limit)
-            .execute()
         )
 
         return ChatMessageMapper.to_domain_list(
@@ -279,12 +273,11 @@ class ChatRepository(BaseRepository):
         message_id: UUID,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.messages()
             .select("id")
             .eq("id", str(message_id))
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)
@@ -298,12 +291,11 @@ class ChatRepository(BaseRepository):
         tool_call: ToolCall | dict,
     ) -> ToolCall | None:
 
-        response = (
+        response = await execute(
             self.tools()
             .insert(
                 ToolCallMapper.to_insert(tool_call)
             )
-            .execute()
         )
 
         row = self.raw(response)
@@ -320,12 +312,11 @@ class ChatRepository(BaseRepository):
         tool_call_id: UUID,
     ) -> ToolCall | None:
 
-        response = (
+        response = await execute(
             self.tools()
             .select("*")
             .eq("id", str(tool_call_id))
             .limit(1)
-            .execute()
         )
 
         row = self.raw(response)
@@ -342,11 +333,10 @@ class ChatRepository(BaseRepository):
         message_id: UUID,
     ) -> list[ToolCall]:
 
-        response = (
+        response = await execute(
             self.tools()
             .select("*")
             .eq("message_id", str(message_id))
-            .execute()
         )
 
         return ToolCallMapper.to_domain_list(
@@ -359,7 +349,7 @@ class ChatRepository(BaseRepository):
         session_id: UUID,
     ) -> list[ToolCall]:
 
-        response = (
+        response = await execute(
             self.tools()
             .select("*")
             .eq("session_id", str(session_id))
@@ -367,7 +357,6 @@ class ChatRepository(BaseRepository):
                 "created_at",
                 desc=False,
             )
-            .execute()
         )
 
         return ToolCallMapper.to_domain_list(
@@ -381,7 +370,7 @@ class ChatRepository(BaseRepository):
         tool_name: str,
     ) -> list[ToolCall]:
 
-        response = (
+        response = await execute(
             self.tools()
             .select("*")
             .eq("org_id", str(org_id))
@@ -390,7 +379,6 @@ class ChatRepository(BaseRepository):
                 "created_at",
                 desc=True,
             )
-            .execute()
         )
 
         return ToolCallMapper.to_domain_list(
@@ -403,12 +391,11 @@ class ChatRepository(BaseRepository):
         tool_call_id: UUID,
     ) -> bool:
 
-        response = (
+        response = await execute(
             self.tools()
             .select("id")
             .eq("id", str(tool_call_id))
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)

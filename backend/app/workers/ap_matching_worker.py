@@ -8,6 +8,8 @@ from app.services.ap.invoice_state_machine import InvoiceStateMachine
 from app.services.ap.matching_service import MatchingService
 from app.workers.base import BaseWorker
 logger=logging.getLogger(__name__)
+from app.core.db import execute
+
 class APMatchingWorker(BaseWorker):
     name="ap-matching-worker"
     def __init__(self,db=None): super().__init__(); self.db=db or get_supabase(); self.state=InvoiceStateMachine(self.db); self.service=MatchingService(self.db)
@@ -25,7 +27,7 @@ class APMatchingWorker(BaseWorker):
                 logger.warning("Failed to release AP matching lock", exc_info=True)
 
     async def _run_once(self, *, document_id: UUID):
-        doc=self.db.table("documents").select("*").eq("id",str(document_id)).single().execute().data
+        doc=(await execute(self.db.table("documents").select("*").eq("id",str(document_id)).single())).data
         if not doc or doc.get("document_type")!="invoice":
             return
         # AP is opt-in. A normal invoice upload must never enter AP
@@ -34,27 +36,27 @@ class APMatchingWorker(BaseWorker):
             return
         # AP automation is business-mode only. Personal finance documents
         # continue through the existing personal pipeline untouched.
-        org = self.db.table("organizations").select("features").eq("id", str(doc["org_id"])).limit(1).execute().data
+        org = (await execute(self.db.table("organizations").select("features").eq("id", str(doc["org_id"])).limit(1))).data
         features = (org[0].get("features") or {}) if org else {}
         if bool(features.get("personal_mode")):
             return
         if doc.get("ap_status") not in {InvoiceAPStatus.VALIDATING.value, InvoiceAPStatus.MATCHING.value}:
             return
         if doc.get("ap_status") == InvoiceAPStatus.VALIDATING.value:
-            self.db.table("documents").update({"processing_step": "ap_matching", "processing_message": "Comparing invoice details against the selected purchase order and receipt.", "processing_progress": 35, "error_message": None}).eq("id", str(document_id)).eq("org_id", str(doc["org_id"])).execute()
+            await execute(self.db.table("documents").update({"processing_step": "ap_matching", "processing_message": "Comparing invoice details against the selected purchase order and receipt.", "processing_progress": 35, "error_message": None}).eq("id", str(document_id)).eq("org_id", str(doc["org_id"])))
             await self.state.transition(document_id,UUID(doc["org_id"]),InvoiceAPStatus.MATCHING,triggered_by="worker")
         else:
             # A previous run was interrupted after the state transition. Resume
             # the same step instead of waiting for a human reset.
-            self.db.table("documents").update({"processing_step": "ap_matching", "processing_message": "Resuming invoice matching after an interrupted run.", "processing_progress": 35}).eq("id", str(document_id)).eq("org_id", str(doc["org_id"])).execute()
-        lines=self.db.table("document_line_items").select("*").eq("org_id",str(doc["org_id"])).eq("document_id",str(document_id)).order("position").execute().data or []
+            await execute(self.db.table("documents").update({"processing_step": "ap_matching", "processing_message": "Resuming invoice matching after an interrupted run.", "processing_progress": 35}).eq("id", str(document_id)).eq("org_id", str(doc["org_id"])))
+        lines=(await execute(self.db.table("document_line_items").select("*").eq("org_id",str(doc["org_id"])).eq("document_id",str(document_id)).order("position"))).data or []
         po=None
         if doc.get("purchase_order_id"):
-            rows=self.db.table("purchase_orders").select("*").eq("org_id",doc["org_id"]).eq("id",doc["purchase_order_id"]).limit(1).execute().data
+            rows=(await execute(self.db.table("purchase_orders").select("*").eq("org_id",doc["org_id"]).eq("id",doc["purchase_order_id"]).limit(1))).data
             po=rows[0] if rows else None
         receipt=None
         if doc.get("goods_receipt_id"):
-            rows=self.db.table("goods_receipts").select("*, goods_receipt_lines(*)").eq("org_id",doc["org_id"]).eq("id",doc["goods_receipt_id"]).limit(1).execute().data
+            rows=(await execute(self.db.table("goods_receipts").select("*, goods_receipt_lines(*)").eq("org_id",doc["org_id"]).eq("id",doc["goods_receipt_id"]).limit(1))).data
             receipt=rows[0] if rows else None
         result=await self.service.run(
             org_id=UUID(doc["org_id"]),
@@ -65,13 +67,13 @@ class APMatchingWorker(BaseWorker):
             goods_receipt=receipt,
         )
         if result.status==APMatchStatus.EXCEPTION:
-            self.db.table("documents").update({"status":"needs_review","pipeline_stage":"approval","processing_step":"ap_match_exception","processing_message":f"Matching found {len(result.exceptions)} issue(s). Review the linked exception(s) before continuing.","processing_progress":55}).eq("id",str(document_id)).eq("org_id",str(doc["org_id"])).execute()
+            await execute(self.db.table("documents").update({"status":"needs_review","pipeline_stage":"approval","processing_step":"ap_match_exception","processing_message":f"Matching found {len(result.exceptions)} issue(s). Review the linked exception(s) before continuing.","processing_progress":55}).eq("id",str(document_id)).eq("org_id",str(doc["org_id"])))
             await self.state.transition(document_id,UUID(doc["org_id"]),InvoiceAPStatus.MATCH_EXCEPTION,triggered_by="worker",reason=f"{len(result.exceptions)} matching exception(s)")
         else:
-            self.db.table("documents").update({"processing_step":"ap_coding","processing_message":"Matching checks completed. Preparing general-ledger coding.","processing_progress":60}).eq("id",str(document_id)).eq("org_id",str(doc["org_id"])).execute()
+            await execute(self.db.table("documents").update({"processing_step":"ap_coding","processing_message":"Matching checks completed. Preparing general-ledger coding.","processing_progress":60}).eq("id",str(document_id)).eq("org_id",str(doc["org_id"])))
             await self.state.transition(document_id,UUID(doc["org_id"]),InvoiceAPStatus.CODING,triggered_by="worker")
     async def run_pending(self,limit:int=50):
-        rows=self.db.table("documents").select("id").eq("ap_enabled",True).eq("ap_status",InvoiceAPStatus.VALIDATING.value).eq("document_type","invoice").limit(limit).execute().data or []
+        rows=(await execute(self.db.table("documents").select("id").eq("ap_enabled",True).eq("ap_status",InvoiceAPStatus.VALIDATING.value).eq("document_type","invoice").limit(limit))).data or []
         done=failed=0
         for row in rows:
             try: await self.execute(document_id=UUID(row["id"])); done+=1

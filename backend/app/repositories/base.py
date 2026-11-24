@@ -27,6 +27,7 @@ from supabase import Client
 
 from app.core.supabase import get_supabase
 from app.mappers.base import BaseMapper
+from app.core.db import execute
 
 logger = logging.getLogger(__name__)
 
@@ -141,12 +142,11 @@ class BaseRepository:
         data,
     ):
 
-        response = (
+        response = await execute(
             self.table()
             .insert(
                 self.mapper.to_insert(data)
             )
-            .execute()
         )
 
         return self._one(response)
@@ -156,12 +156,11 @@ class BaseRepository:
         record_id: UUID,
     ):
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("id", str(record_id))
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -172,13 +171,12 @@ class BaseRepository:
         data,
     ):
 
-        response = (
+        response = await execute(
             self.table()
             .update(
                 self.mapper.to_update(data)
             )
             .eq("id", str(record_id))
-            .execute()
         )
 
         return self._one(response)
@@ -188,11 +186,10 @@ class BaseRepository:
         record_id: UUID,
     ) -> bool:
 
-        (
+        await execute(
             self.table()
             .delete()
             .eq("id", str(record_id))
-            .execute()
         )
 
         return True
@@ -209,7 +206,7 @@ class BaseRepository:
         ascending: bool = False,
     ) -> list[T]:
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .order(
@@ -220,7 +217,6 @@ class BaseRepository:
                 offset,
                 offset + limit - 1,
             )
-            .execute()
         )
 
         return self._many(response)
@@ -234,12 +230,11 @@ class BaseRepository:
         if isinstance(value, UUID):
             value = str(value)
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq(field, value)
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)
@@ -264,7 +259,7 @@ class BaseRepository:
                 value,
             )
 
-        response = query.execute()
+        response = await execute(query)
 
         return response.count or 0
 

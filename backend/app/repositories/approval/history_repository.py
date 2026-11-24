@@ -35,6 +35,7 @@ from uuid import UUID
 from app.mappers.approval_mapper import ApprovalHistoryMapper
 from app.models.domain.approval import ApprovalHistory
 from app.repositories.base import BaseRepository
+from app.core.db import execute
 
 
 class ApprovalHistoryRepository(BaseRepository):
@@ -111,17 +112,44 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("workflow_id", str(workflow_id))
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
+
+    async def list_workflow_history_for_workflows(
+        self,
+        workflow_ids: list[UUID],
+        limit: int = DEFAULT_PAGE_SIZE,
+    ) -> dict[str, list[ApprovalHistory]]:
+        """Return recent history for several workflows in one query."""
+
+        if not workflow_ids:
+            return {}
+
+        limit = self._normalize_limit(limit)
+        response = await execute(
+            self.table()
+            .select("*")
+            .in_("workflow_id", [str(workflow_id) for workflow_id in workflow_ids])
+            .order("created_at", desc=True)
+            .order("id", desc=True)
+            .limit(limit * len(workflow_ids))
+        )
+
+        grouped: dict[str, list[ApprovalHistory]] = {}
+        for event in self._many(response):
+            key = str(event.workflow_id)
+            bucket = grouped.setdefault(key, [])
+            if len(bucket) < limit:
+                bucket.append(event)
+        return grouped
 
     async def workflow_has_history(
         self,
@@ -131,12 +159,11 @@ class ApprovalHistoryRepository(BaseRepository):
         Fast existence check for workflow history.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("id")
             .eq("workflow_id", str(workflow_id))
             .limit(1)
-            .execute()
         )
 
         return bool(response.data)
@@ -149,14 +176,13 @@ class ApprovalHistoryRepository(BaseRepository):
         Return the latest audit event for a workflow.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("workflow_id", str(workflow_id))
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(1)
-            .execute()
         )
 
         return self._one(response)
@@ -210,12 +236,11 @@ class ApprovalHistoryRepository(BaseRepository):
                     before_created_at.isoformat(),
                 )
 
-        response = (
+        response = await execute(
             query
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -235,14 +260,13 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("step_id", str(step_id))
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -272,12 +296,11 @@ class ApprovalHistoryRepository(BaseRepository):
             before_id,
         )
 
-        response = (
+        response = await execute(
             query
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -297,14 +320,13 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("actor_id", str(actor_id))
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -334,12 +356,11 @@ class ApprovalHistoryRepository(BaseRepository):
             before_id,
         )
 
-        response = (
+        response = await execute(
             query
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -361,14 +382,13 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -400,12 +420,11 @@ class ApprovalHistoryRepository(BaseRepository):
             before_id,
         )
 
-        response = (
+        response = await execute(
             query
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -436,7 +455,7 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -444,7 +463,6 @@ class ApprovalHistoryRepository(BaseRepository):
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -476,12 +494,11 @@ class ApprovalHistoryRepository(BaseRepository):
             before_id,
         )
 
-        response = (
+        response = await execute(
             query
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -502,7 +519,7 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -510,7 +527,6 @@ class ApprovalHistoryRepository(BaseRepository):
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -527,7 +543,7 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -535,7 +551,6 @@ class ApprovalHistoryRepository(BaseRepository):
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -557,7 +572,7 @@ class ApprovalHistoryRepository(BaseRepository):
 
         limit = self._normalize_limit(limit)
 
-        response = (
+        response = await execute(
             self.table()
             .select("*")
             .eq("org_id", str(org_id))
@@ -566,7 +581,6 @@ class ApprovalHistoryRepository(BaseRepository):
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -661,12 +675,11 @@ class ApprovalHistoryRepository(BaseRepository):
             before_id,
         )
 
-        response = (
+        response = await execute(
             query
             .order("created_at", desc=True)
             .order("id", desc=True)
             .limit(limit)
-            .execute()
         )
 
         return self._many(response)
@@ -683,7 +696,7 @@ class ApprovalHistoryRepository(BaseRepository):
         Count all events belonging to a workflow.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -693,7 +706,6 @@ class ApprovalHistoryRepository(BaseRepository):
                 "workflow_id",
                 str(workflow_id),
             )
-            .execute()
         )
 
         return response.count or 0
@@ -706,7 +718,7 @@ class ApprovalHistoryRepository(BaseRepository):
         Count organization audit events.
         """
 
-        response = (
+        response = await execute(
             self.table()
             .select(
                 "id",
@@ -716,7 +728,6 @@ class ApprovalHistoryRepository(BaseRepository):
                 "org_id",
                 str(org_id),
             )
-            .execute()
         )
 
         return response.count or 0
